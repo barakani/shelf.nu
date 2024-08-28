@@ -1,9 +1,15 @@
-import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
+import {
+  useFetcher,
+  useLoaderData,
+  useNavigate,
+  useNavigation,
+} from "@remix-run/react";
 import { useZxing } from "react-zxing";
 import { useClientNotification } from "~/hooks/use-client-notification";
 import type { loader } from "~/routes/_layout+/scanner";
 import { ShelfError } from "~/utils/error";
 import { isFormProcessing } from "~/utils/form";
+import { isQrId } from "~/utils/id";
 import { Spinner } from "./shared/spinner";
 
 export const ZXingScanner = ({
@@ -12,22 +18,41 @@ export const ZXingScanner = ({
   videoMediaDevices: MediaDeviceInfo[] | undefined;
 }) => {
   const [sendNotification] = useClientNotification();
+  const navigation = useNavigation();
   const navigate = useNavigate();
   const fetcher = useFetcher();
   const { scannerCameraId } = useLoaderData<typeof loader>();
   const isProcessing = isFormProcessing(fetcher.state);
+  const isRedirecting = isFormProcessing(navigation.state);
 
   // Function to decode the QR code
   const decodeQRCodes = (result: string) => {
-    // console.log("QR code detected", result);
-    if (result != null) {
-      const regex = /^(https?:\/\/)([^/:]+)(:\d+)?\/qr\/([a-zA-Z0-9]+)$/;
-      /** We make sure the value of the QR code matches the structure of Shelf qr codes */
+    if (result != null && !isRedirecting) {
+      /**
+       * - ^(https?:\/\/[^\/]+\/ matches the protocol, domain, and the initial slash.
+       * - (?:qr\/)? optionally matches the /qr/ part.
+       * - ([a-zA-Z0-9]+))$ matches the QR ID which is the last segment of the URL.
+       * - $ ensures that there are no additional parts after the QR ID.
+       */
+      // Regex to match both old and new QR code structures
+      const regex = /^(https?:\/\/[^/]+\/(?:qr\/)?([a-zA-Z0-9]+))$/;
+
+      /** We make sure the value of the QR code matches the structure of Shelf QR codes */
       const match = result.match(regex);
       if (!match) {
-        /** If the QR code does not match the structure of Shelf qr codes, we show an error message */
+        /** If the QR code does not match the structure of Shelf QR codes, we show an error message */
         sendNotification({
           title: "QR Code Not Valid",
+          message: "Please Scan valid asset QR",
+          icon: { name: "trash", variant: "error" },
+        });
+        return;
+      }
+
+      const qrId = match[2]; // Get the QR id from the URL
+      if (!isQrId(qrId)) {
+        sendNotification({
+          title: "QR ID Not Valid",
           message: "Please Scan valid asset QR",
           icon: { name: "trash", variant: "error" },
         });
@@ -39,7 +64,7 @@ export const ZXingScanner = ({
         message: "Redirecting to mapped asset",
         icon: { name: "success", variant: "success" },
       });
-      const qrId = match[4]; // Get the last segment of the URL as the QR id
+
       navigate(`/qr/${qrId}`);
     }
   };
@@ -49,7 +74,6 @@ export const ZXingScanner = ({
     constraints: { video: true, audio: false },
     timeBetweenDecodingAttempts: 100,
     onDecodeResult(result) {
-      // console.log(result.getText());
       decodeQRCodes(result.getText());
     },
     onError(cause) {

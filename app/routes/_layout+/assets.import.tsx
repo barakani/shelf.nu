@@ -18,7 +18,6 @@ import {
   TabsTrigger,
 } from "~/components/shared/tabs";
 import { createAssetsFromContentImport } from "~/modules/asset/service.server";
-import { assertUserCanImportAssets } from "~/modules/tier/service.server";
 import { appendToMetaTitle } from "~/utils/append-to-meta-title";
 import { csvDataFromRequest } from "~/utils/csv.server";
 import { ShelfError, makeShelfError } from "~/utils/error";
@@ -27,8 +26,9 @@ import { extractCSVDataFromContentImport } from "~/utils/import.server";
 import {
   PermissionAction,
   PermissionEntity,
-} from "~/utils/permissions/permission.validator.server";
+} from "~/utils/permissions/permission.data";
 import { requirePermission } from "~/utils/roles.server";
+import { assertUserCanImportAssets } from "~/utils/subscription.server";
 
 export const action = async ({ context, request }: ActionFunctionArgs) => {
   const authSession = context.getSession();
@@ -103,7 +103,7 @@ export const loader = async ({ context, request }: LoaderFunctionArgs) => {
     return json(
       data({
         header: {
-          title: "Import assets (beta)",
+          title: "Import assets",
         },
       })
     );
@@ -125,8 +125,8 @@ export default function AssetsImport() {
   return (
     <div className="h-full">
       <Header />
-      <div className="flex size-full flex-col items-center">
-        <div className="h-[180px] w-full"></div>
+      <div className="flex h-auto w-full flex-col items-center">
+        <div className="h-[80px] w-full"></div>
         <Tabs defaultValue="content" className="w-1/2">
           <TabsList>
             <TabsTrigger value="content">Import your own content</TabsTrigger>

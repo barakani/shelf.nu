@@ -1,7 +1,10 @@
+// import the Sentry instrumentation file before anything else.
+// It is important to import it as .js for this to work, even if the file is .ts
+import "./instrument.server.js";
+
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { AppLoadContext, ServerBuild } from "@remix-run/node";
-import { createCookieSessionStorage } from "@remix-run/node";
 import { Hono } from "hono";
 import { remix } from "remix-hono/handler";
 import { getSession, session } from "remix-hono/session";
@@ -11,24 +14,54 @@ import { ShelfError } from "~/utils/error";
 
 import { importDevBuild } from "./dev/server";
 import { logger } from "./logger";
-import { cache, protect, refreshSession } from "./middleware";
-import { authSessionKey } from "./session";
+import { cache, protect, refreshSession, urlShortener } from "./middleware";
+import { authSessionKey, createSessionStorage } from "./session";
 import type { FlashData, SessionData } from "./session";
 
 // Server will not start if the env is not valid
 initEnv();
 
+/**
+ * installGlobals from remix doesnt work as it conflicts with some other packages that we use and overrides some of their types
+ * In our case the only type causing issue is File and it only happens in development mode
+ * So we will import it conditionally in development mode
+ * */
+if (env.NODE_ENV !== "production") {
+  void import("@remix-run/web-fetch").then((webFetch) => {
+    global.File = webFetch.File;
+  });
+}
+
 const mode = env.NODE_ENV === "test" ? "development" : env.NODE_ENV;
 
 const isProductionMode = mode === "production";
 
-const app = new Hono();
+const app = new Hono({
+  getPath: (req) => {
+    const url = new URL(req.url);
+    const host = req.headers.get("host");
+
+    if (process.env.URL_SHORTENER && host === process.env.URL_SHORTENER) {
+      return "/" + host + url.pathname;
+    }
+
+    return url.pathname;
+  },
+});
+
+// Apply the middleware to all routes
+app.use(
+  `/${process.env.URL_SHORTENER}/:path*`,
+  urlShortener({
+    excludePaths: ["/file-assets", "/healthcheck", "/static"],
+  })
+);
 
 /**
  * Serve assets files from build/client/assets
  */
 app.use(
-  "/assets/*",
+  "/file-assets/*",
   cache(60 * 60 * 24 * 365), // 1 year
   serveStatic({ root: "./build/client" })
 );
@@ -54,16 +87,7 @@ app.use(
   session({
     autoCommit: true,
     createSessionStorage() {
-      const sessionStorage = createCookieSessionStorage({
-        cookie: {
-          name: "__authSession",
-          httpOnly: true,
-          path: "/",
-          sameSite: "lax",
-          secrets: [env.SESSION_SECRET],
-          secure: env.NODE_ENV === "production",
-        },
-      });
+      const sessionStorage = createSessionStorage();
 
       return {
         ...sessionStorage,
@@ -98,6 +122,8 @@ app.use(
       "/forgot-password",
       "/join",
       "/login",
+      "/sso-login",
+      "/oauth/callback",
       "/logout",
       "/otp",
       "/resend-otp",

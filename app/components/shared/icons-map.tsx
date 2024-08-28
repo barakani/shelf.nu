@@ -28,10 +28,27 @@ import {
   HelpIcon,
   Profile,
   UserIcon,
+  GpsMarkerIcon,
+  DuplicateIcon,
+  GraphIcon,
+  ScanQRIcon,
+  SwitchIcon,
+  KitIcon,
+  BookingsIcon,
+  CheckOutIcon,
+  CheckInIcon,
+  CheckIcon,
+  PartialCheckboxIcon,
+  AssetLabel,
+  LockIcon,
+  ActiveSwitchIcon,
+  MapIcon,
 } from "../icons/library";
 
 /** The possible options for icons to be rendered in the button */
-export type Icon =
+export type IconType =
+  | "check"
+  | "map"
   | "plus"
   | "trash"
   | "archive"
@@ -39,6 +56,7 @@ export type Icon =
   | "search"
   | "spinner"
   | "x"
+  | "cancel"
   | "refresh"
   | "coins"
   | "barcode"
@@ -50,6 +68,8 @@ export type Icon =
   | "tag"
   | "category"
   | "location"
+  | "gps"
+  | "duplicate"
   | "asset"
   | "download"
   | "print"
@@ -59,13 +79,27 @@ export type Icon =
   | "profile"
   | "send"
   | "user"
-  | "calendar";
+  | "calendar"
+  | "graph"
+  | "scanQR"
+  | "switch"
+  | "kit"
+  | "bookings"
+  | "assign-custody"
+  | "release-custody"
+  | "partial-checkbox"
+  | "asset-label"
+  | "lock"
+  | "activate"
+  | "deactivate";
 
 type IconsMap = {
-  [key in Icon]: JSX.Element;
+  [key in IconType]: JSX.Element;
 };
 
 export const iconsMap: IconsMap = {
+  check: <CheckIcon />,
+  map: <MapIcon />,
   plus: <PlusIcon />,
   trash: <TrashIcon />,
   archive: <ArchiveIcon />,
@@ -73,6 +107,7 @@ export const iconsMap: IconsMap = {
   search: <SearchIcon />,
   spinner: <Spinner />,
   x: <XIcon />,
+  cancel: <XIcon />,
   refresh: <RefreshIcon />,
   coins: <CoinsIcon />,
   barcode: <BarCodeIcon />,
@@ -84,6 +119,8 @@ export const iconsMap: IconsMap = {
   tag: <TagsIcon />,
   category: <CategoriesIcon />,
   location: <LocationMarkerIcon />,
+  gps: <GpsMarkerIcon />,
+  duplicate: <DuplicateIcon />,
   asset: <AssetsIcon />,
   download: <DownloadIcon />,
   print: <PrintIcon />,
@@ -94,6 +131,18 @@ export const iconsMap: IconsMap = {
   send: <SendIcon />,
   user: <UserIcon />,
   calendar: <CalendarIcon className="size-5" />,
+  bookings: <BookingsIcon />,
+  graph: <GraphIcon />,
+  scanQR: <ScanQRIcon />,
+  switch: <SwitchIcon />,
+  kit: <KitIcon />,
+  "assign-custody": <CheckOutIcon />,
+  "release-custody": <CheckInIcon />,
+  "partial-checkbox": <PartialCheckboxIcon />,
+  "asset-label": <AssetLabel />,
+  lock: <LockIcon />,
+  activate: <ActiveSwitchIcon />,
+  deactivate: <XIcon />,
 };
 
 export default iconsMap;

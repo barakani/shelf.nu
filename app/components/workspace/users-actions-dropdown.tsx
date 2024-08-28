@@ -1,4 +1,4 @@
-import { useState } from "react";
+import type { ReactNode } from "react";
 import type { InviteStatuses, User } from "@prisma/client";
 import { useFetcher } from "@remix-run/react";
 import {
@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "~/components/shared/dropdown";
 
+import { useControlledDropdownMenu } from "~/hooks/use-controlled-dropdown-menu";
 import { isFormProcessing } from "~/utils/form";
 import { Button } from "../shared/button";
 import { Spinner } from "../shared/spinner";
@@ -23,33 +24,49 @@ export function TeamUsersActionsDropdown({
   name,
   teamMemberId,
   email,
+  isSSO,
+  customTrigger,
 }: {
   userId: User["id"] | null;
   inviteStatus: InviteStatuses;
   name?: string;
   teamMemberId?: string;
   email: string;
+  isSSO: boolean;
+  customTrigger?: (disabled: boolean) => ReactNode;
 }) {
   const fetcher = useFetcher();
   const disabled = isFormProcessing(fetcher.state);
-  const [open, setOpen] = useState(false);
+  const { ref, open, setOpen } = useControlledDropdownMenu();
 
-  return (
+  /** Most users will have an invite, however we have to handle SSO case:
+   *
+   * 1. If the user has an invite, we show the "Resend invite" and "Cancel invite" buttons.
+   * 2. If the user has accepted the invite or doesn't have an invite but has userId(SSO), we show the "Revoke access" button.
+   */
+  const hasInvite = !!inviteStatus;
+
+  return hasInvite || (!hasInvite && isSSO) ? (
     <>
       <DropdownMenu
         modal={false}
         onOpenChange={(open) => setOpen(open)}
         open={open}
       >
-        <DropdownMenuTrigger className="size-6 pr-2 outline-none focus-visible:border-0">
-          <i className="inline-block px-3 py-0 text-gray-400 ">
-            {disabled ? <Spinner className="size-4" /> : <VerticalDotsIcon />}
-          </i>
+        <DropdownMenuTrigger className="w-full " asChild>
+          {customTrigger ? (
+            customTrigger(disabled)
+          ) : (
+            <Button variant="tertiary" width="full" className="border-0 pr-0">
+              {disabled ? <Spinner className="size-4" /> : <VerticalDotsIcon />}
+            </Button>
+          )}
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
           className="order w-[180px] rounded-md bg-white p-[6px] text-right"
           asChild
+          ref={ref}
         >
           <fetcher.Form
             method="post"
@@ -58,7 +75,7 @@ export function TeamUsersActionsDropdown({
             }}
           >
             {/* Only show resend button if the invite is not accepted */}
-            {inviteStatus !== "ACCEPTED" ? (
+            {inviteStatus && inviteStatus !== "ACCEPTED" ? (
               <>
                 <input type="hidden" name="name" value={name} />
                 <input type="hidden" name="email" value={email} />
@@ -91,7 +108,8 @@ export function TeamUsersActionsDropdown({
                 </Button>
               </>
             ) : null}
-            {inviteStatus === "ACCEPTED" ? (
+            {(hasInvite && inviteStatus === "ACCEPTED") ||
+            (!hasInvite && isSSO) ? (
               <>
                 {userId ? (
                   <input type="hidden" name="userId" value={userId} />
@@ -115,5 +133,5 @@ export function TeamUsersActionsDropdown({
         </DropdownMenuContent>
       </DropdownMenu>
     </>
-  );
+  ) : null;
 }

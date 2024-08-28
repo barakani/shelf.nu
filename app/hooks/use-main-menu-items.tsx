@@ -1,68 +1,96 @@
-import {
-  AssetsIcon,
-  CalendarIcon,
-  CategoriesIcon,
-  GraphIcon,
-  LocationMarkerIcon,
-  ScanQRIcon,
-  SettingsIcon,
-  TagsIcon,
-} from "~/components/icons/library";
-// eslint-disable-next-line import/no-cycle
-import { useUserIsSelfService } from "./user-user-is-self-service";
+import Icon from "~/components/icons/icon";
+import { useUserData } from "./use-user-data";
+import { useUserRoleHelper } from "./user-user-role-helper";
 
 export function useMainMenuItems() {
+  const user = useUserData();
+  const { isBaseOrSelfService } = useUserRoleHelper();
+
   let menuItemsTop = [
     {
-      icon: <GraphIcon />,
+      icon: <Icon icon="graph" />,
       to: "dashboard",
-      label: "Dashboard",
+      title: "Dashboard",
     },
     {
-      icon: <AssetsIcon />,
+      icon: <Icon icon="asset" />,
       to: "assets",
-      label: "Assets",
+      title: "Assets",
     },
     {
-      icon: <CategoriesIcon />,
+      icon: <Icon icon="kit" />,
+      to: "kits",
+      title: "Kits",
+    },
+    {
+      icon: <Icon icon="category" />,
       to: "categories",
-      label: "Categories",
+      title: "Categories",
     },
     {
-      icon: <TagsIcon />,
+      icon: <Icon icon="tag" />,
       to: "tags",
-      label: "Tags",
+      title: "Tags",
     },
     {
-      icon: <LocationMarkerIcon />,
+      icon: <Icon icon="location" />,
       to: "locations",
-      label: "Locations",
+      title: "Locations",
     },
     {
-      icon: <CalendarIcon />,
+      icon: <Icon icon="calendar" />,
+      to: "calendar",
+      title: "Calendar",
+    },
+    {
+      icon: <Icon icon="bookings" />,
       to: "bookings",
-      label: "Bookings (beta)",
+      title: "Bookings",
+    },
+    {
+      icon: <Icon icon="user" />,
+      to: "/settings/team",
+      title: "Team",
     },
   ];
-  const menuItemsBottom = [
+  let menuItemsBottom = [
     {
-      icon: <ScanQRIcon />,
+      icon: <Icon icon="asset-label" />,
+      to: `https://www.shelf.nu/order-tags?email=${user?.email}${
+        user?.firstName ? `&firstName=${user.firstName}` : ""
+      }${user?.lastName ? `&lastName=${user.lastName}` : ""}`,
+      title: "Asset labels",
+      target: "_blank",
+      isNew: true,
+    },
+    {
+      icon: <Icon icon="scanQR" />,
       to: "scanner",
-      label: "QR scanner",
+      title: "QR scanner",
       end: true,
     },
     {
-      icon: <SettingsIcon />,
+      icon: <Icon icon="settings" />,
       to: "settings",
-      label: "Settings",
+      title: "Workspace settings",
       end: true,
     },
   ];
 
-  if (useUserIsSelfService()) {
+  if (isBaseOrSelfService) {
     /** Deleting the Dashboard menu item as its not needed for self_service users. */
-    const itemsToRemove = ["dashboard", "categories", "tags", "locations"];
+    const itemsToRemove = [
+      "dashboard",
+      "categories",
+      "tags",
+      "locations",
+      "settings",
+      "/settings/team",
+    ];
     menuItemsTop = menuItemsTop.filter(
+      (item) => !itemsToRemove.includes(item.to)
+    );
+    menuItemsBottom = menuItemsBottom.filter(
       (item) => !itemsToRemove.includes(item.to)
     );
   }

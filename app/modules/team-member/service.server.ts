@@ -5,7 +5,7 @@ import { updateCookieWithPerPage } from "~/utils/cookies.server";
 import type { ErrorLabel } from "~/utils/error";
 import { ShelfError } from "~/utils/error";
 import { getCurrentSearchParams } from "~/utils/http.server";
-import { getParamsValues } from "~/utils/list";
+import { ALL_SELECTED_KEY, getParamsValues } from "~/utils/list";
 import type { CreateAssetFromContentImportPayload } from "../asset/types";
 
 const label: ErrorLabel = "Team Member";
@@ -13,9 +13,11 @@ const label: ErrorLabel = "Team Member";
 export async function createTeamMember({
   name,
   organizationId,
+  userId,
 }: {
   name: TeamMember["name"];
   organizationId: Organization["id"];
+  userId?: TeamMember["userId"];
 }) {
   try {
     return await db.teamMember.create({
@@ -26,6 +28,13 @@ export async function createTeamMember({
             id: organizationId,
           },
         },
+        user: userId
+          ? {
+              connect: {
+                id: userId,
+              },
+            }
+          : undefined,
       },
     });
   } catch (cause) {
@@ -90,9 +99,11 @@ export async function createTeamMemberIfNotExists({
     throw new ShelfError({
       cause,
       message:
-        "Something went wrong while creating the team member. Please try again or contact support.",
+        "Something went wrong while creating the team member. Seems like some of the team member data in your import file is invalid. Please check and try again.",
       additionalData: { organizationId },
       label,
+      /** No need to capture those. They are mostly related to malformed CSV data */
+      shouldBeCaptured: false,
     });
   }
 }
@@ -192,3 +203,129 @@ export const getPaginatedAndFilterableTeamMembers = async ({
     });
   }
 };
+
+export async function getTeamMemberForCustodianFilter({
+  organizationId,
+  selectedTeamMembers = [],
+  getAll,
+}: {
+  organizationId: Organization["id"];
+  selectedTeamMembers?: TeamMember["id"][];
+  getAll?: boolean;
+}) {
+  try {
+    const [teamMemberExcludedSelected, teamMembersSelected, totalTeamMembers] =
+      await Promise.all([
+        db.teamMember.findMany({
+          where: {
+            organizationId,
+            id: { notIn: selectedTeamMembers },
+            deletedAt: null,
+          },
+          include: {
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+          },
+          take: getAll ? undefined : 12,
+        }),
+        db.teamMember.findMany({
+          where: { organizationId, id: { in: selectedTeamMembers } },
+        }),
+        db.teamMember.count({ where: { organizationId, deletedAt: null } }),
+      ]);
+
+    const allTeamMembers = [
+      ...teamMembersSelected,
+      ...teamMemberExcludedSelected,
+    ];
+
+    /**
+     * If teamMember has a user associated then we have to use that user's id
+     * otherwise we have to use teamMember's id
+     */
+    const combinedTeamMembers = allTeamMembers.map((teamMember) => ({
+      ...teamMember,
+      id: teamMember.userId ? teamMember.userId : teamMember.id,
+    }));
+
+    return {
+      teamMembers: combinedTeamMembers,
+      rawTeamMembers: allTeamMembers,
+      totalTeamMembers,
+    };
+  } catch (cause) {
+    throw new ShelfError({
+      cause,
+      message: "Failed to fetch team members",
+      additionalData: { organizationId },
+      label,
+    });
+  }
+}
+
+export async function getTeamMember({ id }: { id: TeamMember["id"] }) {
+  try {
+    return await db.teamMember.findUniqueOrThrow({ where: { id } });
+  } catch (cause) {
+    throw new ShelfError({
+      cause,
+      message: "Team member not found",
+      additionalData: { id },
+      label,
+    });
+  }
+}
+
+export async function bulkDeleteNRMs({
+  nrmIds,
+  organizationId,
+}: {
+  nrmIds: TeamMember["id"][];
+  organizationId: TeamMember["organizationId"];
+}) {
+  try {
+    const where: Prisma.TeamMemberWhereInput = nrmIds.includes(ALL_SELECTED_KEY)
+      ? { organizationId }
+      : { id: { in: nrmIds }, organizationId };
+
+    const teamMembers = await db.teamMember.findMany({
+      where,
+      select: { id: true, _count: { select: { custodies: true } } },
+    });
+
+    /** If some team members have custody, then delete is not allowed */
+    const someTeamMemberHasCustodies = teamMembers.some(
+      (tm) => tm._count.custodies > 0
+    );
+
+    if (someTeamMemberHasCustodies) {
+      throw new ShelfError({
+        cause: null,
+        message:
+          "Some team members has custody over some assets. Please release custody or check-in those assets before deleting the user.",
+        label,
+      });
+    }
+
+    return await db.teamMember.updateMany({
+      where: { id: { in: teamMembers.map((tm) => tm.id) } },
+      data: { deletedAt: new Date() },
+    });
+  } catch (cause) {
+    const message =
+      cause instanceof ShelfError
+        ? cause.message
+        : "Something went wrong while bulk deleting non-registered members";
+
+    throw new ShelfError({
+      cause,
+      message,
+      label,
+    });
+  }
+}

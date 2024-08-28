@@ -1,7 +1,6 @@
-import { useMemo, useState } from "react";
 import type { Prisma } from "@prisma/client";
 import { useLoaderData } from "@remix-run/react";
-import { SendIcon, VerticalDotsIcon } from "~/components/icons/library";
+import { VerticalDotsIcon } from "~/components/icons/library";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,10 +8,11 @@ import {
   DropdownMenuTrigger,
 } from "~/components/shared/dropdown";
 
-import type { loader } from "~/routes/_layout+/settings.team";
-import { isPersonalOrg as checkIsPersonalOrg } from "~/utils/organization";
+import { useControlledDropdownMenu } from "~/hooks/use-controlled-dropdown-menu";
+import type { loader } from "~/routes/_layout+/settings.team.nrm";
+import { tw } from "~/utils/tw";
 import { DeleteMember } from "./delete-member";
-import { ControlledActionButton } from "../shared/controlled-action-button";
+import { Button } from "../shared/button";
 
 export function TeamMembersActionsDropdown({
   teamMember,
@@ -27,12 +27,8 @@ export function TeamMembersActionsDropdown({
     };
   }>;
 }) {
-  const { organization } = useLoaderData<typeof loader>();
-  const [open, setOpen] = useState(false);
-  const isPersonalOrg = useMemo(
-    () => checkIsPersonalOrg(organization),
-    [organization]
-  );
+  const { isPersonalOrg } = useLoaderData<typeof loader>();
+  const { ref, open, setOpen } = useControlledDropdownMenu();
 
   return (
     <DropdownMenu
@@ -48,28 +44,44 @@ export function TeamMembersActionsDropdown({
       <DropdownMenuContent
         align="end"
         className="order w-[180px] rounded-md bg-white p-[6px] text-right "
+        ref={ref}
       >
-        <DropdownMenuItem className="text-gray-700hover:text-gray-700 p-4 hover:bg-slate-100">
-          <ControlledActionButton
-            canUseFeature={!isPersonalOrg}
-            buttonContent={{
-              title: (
-                <span className="flex items-center gap-2 text-gray-700">
-                  <SendIcon /> Invite user
-                </span>
-              ),
-              message:
-                "You are not able to invite users to a personal workspace. ",
-            }}
-            buttonProps={{
-              to: `invite-user?teamMemberId=${teamMember.id}`,
-              role: "link",
-              variant: "link",
-              className: "justify-start  !text-gray-700 !hover:text-gray-700",
-              width: "full",
-              onClick: () => setOpen(false),
-            }}
-          />
+        <DropdownMenuItem className="p-0 text-gray-700 hover:bg-slate-100 hover:text-gray-700">
+          <Button
+            icon="send"
+            to={`/settings/team/users/invite-user?teamMemberId=${teamMember.id}`}
+            role="link"
+            variant="link"
+            width="full"
+            className={tw(
+              "!hover:text-gray-700 justify-start  p-4 !text-gray-700"
+            )}
+            onClick={() => setOpen(false)}
+            disabled={
+              isPersonalOrg
+                ? {
+                    reason:
+                      "You are not able to invite users to a personal workspace. ",
+                  }
+                : false
+            }
+          >
+            Invite user
+          </Button>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem className="p-0 text-gray-700 hover:bg-slate-100 hover:text-gray-700">
+          <Button
+            to={`${teamMember.id}/edit`}
+            role="link"
+            variant="link"
+            className="justify-start whitespace-nowrap px-4 py-3  text-gray-700 hover:text-gray-700"
+            width="full"
+            icon="pen"
+            onClick={() => setOpen(false)}
+          >
+            Edit
+          </Button>
         </DropdownMenuItem>
 
         <DeleteMember teamMember={teamMember} />

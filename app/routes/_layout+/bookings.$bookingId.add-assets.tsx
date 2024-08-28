@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import type { Asset, Booking, Category, Custody } from "@prisma/client";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type Asset,
+  type Booking,
+  type Category,
+  type Custody,
+} from "@prisma/client";
 import type {
   ActionFunctionArgs,
   LinksFunction,
@@ -7,10 +12,10 @@ import type {
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import {
-  Form,
   useLoaderData,
+  useNavigate,
   useNavigation,
-  useSearchParams,
+  useSubmit,
 } from "@remix-run/react";
 import { useAtom, useAtomValue } from "jotai";
 import { z } from "zod";
@@ -19,22 +24,34 @@ import { AssetImage } from "~/components/assets/asset-image";
 import { AvailabilityLabel } from "~/components/booking/availability-label";
 import { AvailabilitySelect } from "~/components/booking/availability-select";
 import styles from "~/components/booking/styles.css?url";
+import UnsavedChangesAlert from "~/components/booking/unsaved-changes-alert";
+import { Form } from "~/components/custom-form";
+import DynamicDropdown from "~/components/dynamic-dropdown/dynamic-dropdown";
 import { FakeCheckbox } from "~/components/forms/fake-checkbox";
-import Input from "~/components/forms/input";
+import { ChevronRight } from "~/components/icons/library";
 import Header from "~/components/layout/header";
 import { List } from "~/components/list";
+import { Filters } from "~/components/list/filters";
 import { Button } from "~/components/shared/button";
+import { GrayBadge } from "~/components/shared/gray-badge";
+import { Image } from "~/components/shared/image";
 
-import { Td } from "~/components/table";
 import {
-  createNotes,
-  getPaginatedAndFilterableAssets,
-} from "~/modules/asset/service.server";
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "~/components/shared/tabs";
+import { Td } from "~/components/table";
+
+import { getPaginatedAndFilterableAssets } from "~/modules/asset/service.server";
 import {
   getBooking,
+  getKitIdsByAssets,
   removeAssets,
   upsertBooking,
 } from "~/modules/booking/service.server";
+import { createNotes } from "~/modules/note/service.server";
 import { getUserByID } from "~/modules/user/service.server";
 import { getClientHint } from "~/utils/client-hints";
 import { makeShelfError } from "~/utils/error";
@@ -43,8 +60,9 @@ import { data, error, getParams, parseData } from "~/utils/http.server";
 import {
   PermissionAction,
   PermissionEntity,
-} from "~/utils/permissions/permission.validator.server";
+} from "~/utils/permissions/permission.data";
 import { requirePermission } from "~/utils/roles.server";
+import { tw } from "~/utils/tw";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: styles }];
 
@@ -76,12 +94,13 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
       tags,
       assets,
       totalPages,
+      totalCategories,
+      totalTags,
+      locations,
+      totalLocations,
     } = await getPaginatedAndFilterableAssets({
       request,
       organizationId,
-      excludeCategoriesQuery: true,
-      excludeTagsQuery: true,
-      excludeSearchFromView: true,
     });
 
     const modelName = {
@@ -90,12 +109,18 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
     };
 
     const booking = await getBooking({ id, organizationId });
+    const bookingKitIds = getKitIdsByAssets(booking.assets);
 
     return json(
       data({
         header: {
           title: `Manage assets for ‘${booking?.name}’`,
           subHeading: "Fill up the booking with the assets of your choice",
+        },
+        searchFieldLabel: "Search assets",
+        searchFieldTooltip: {
+          title: "Search your asset database",
+          text: "Search assets based on asset name or description, category, tag, location, custodian name. Simply separate your keywords by a space: 'Laptop lenovo 2020'.",
         },
         showModal: true,
         noScroll: true,
@@ -109,6 +134,11 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
         perPage,
         totalPages,
         modelName,
+        totalCategories,
+        totalTags,
+        locations,
+        totalLocations,
+        bookingKitIds,
       })
     );
   } catch (cause) {
@@ -132,14 +162,12 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
       action: PermissionAction.update,
     });
 
-    // assetIds: z.array(z.string()).optional().default([]),
-    // removedAssetIds: z.array(z.string()).optional().default([]),
-
-    const { assetIds, removedAssetIds } = parseData(
+    const { assetIds, removedAssetIds, redirectTo } = parseData(
       await request.formData(),
       z.object({
         assetIds: z.array(z.string()).optional().default([]),
         removedAssetIds: z.array(z.string()).optional().default([]),
+        redirectTo: z.string().optional().nullable(),
       }),
       {
         additionalData: { userId, bookingId },
@@ -180,6 +208,14 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
       });
     }
 
+    /**
+     * If redirectTo is in form that means user has submitted the form through alert,
+     * so we have to redirect to add-kits url
+     */
+    if (redirectTo) {
+      return redirect(redirectTo);
+    }
+
     return redirect(`/bookings/${bookingId}`);
   } catch (cause) {
     const reason = makeShelfError(cause, { userId, bookingId });
@@ -188,23 +224,14 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
 }
 
 export default function AddAssetsToNewBooking() {
-  const { booking, search, header } = useLoaderData<typeof loader>();
-  const [_searchParams, setSearchParams] = useSearchParams();
+  const [isAlertOpen, setIsAlertOpen] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const { booking, header, bookingKitIds } = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
   const navigation = useNavigation();
   const isSearching = isFormProcessing(navigation.state);
-  const [searchValue, setSearchValue] = useState(search || "");
-  function handleSearch(value: string) {
-    setSearchParams((prev) => {
-      prev.set("s", value);
-      return prev;
-    });
-  }
-  function clearSearch() {
-    setSearchParams((prev) => {
-      prev.delete("s");
-      return prev;
-    });
-  }
+  const submit = useSubmit();
 
   const bookingAssetsIds = useMemo(
     () => booking?.assets.map((a) => a.id) || [],
@@ -214,16 +241,32 @@ export default function AddAssetsToNewBooking() {
   const [selectedAssets, setSelectedAssets] = useAtom(
     bookingsSelectedAssetsAtom
   );
+
   const removedAssetIds = useMemo(
     () => bookingAssetsIds.filter((prevId) => !selectedAssets.includes(prevId)),
     [bookingAssetsIds, selectedAssets]
+  );
+
+  const hasUnsavedChanges = selectedAssets.length !== bookingAssetsIds.length;
+
+  const manageKitsUrl = useMemo(
+    () =>
+      `/bookings/${booking.id}/add-kits?${new URLSearchParams({
+        // We force the as String because we know that the booking.from and booking.to are strings and exist at this point.
+        // This button wouldnt be available at all if there is no booking.from and booking.to
+        bookingFrom: new Date(booking.from as string).toISOString(),
+        bookingTo: new Date(booking.to as string).toISOString(),
+        hideUnavailable: "true",
+        unhideAssetsBookigIds: booking.id,
+      })}`,
+    [booking]
   );
 
   /**
    * Initially here we were using useHydrateAtoms, but we found that it was causing the selected assets to stay the same as it hydrates only once per store and we dont have different stores per booking
    * So we do a manual effect to set the selected assets to the booking assets ids
    * I would still rather use the useHydrateAtoms, but it's not working as expected.
-   * @TODO Going to ask here: https://github.com/pmndrs/jotai/discussions/669
+   *  https://github.com/pmndrs/jotai/discussions/669
    */
   useEffect(() => {
     setSelectedAssets(bookingAssetsIds);
@@ -231,89 +274,129 @@ export default function AddAssetsToNewBooking() {
   }, [booking.id]);
 
   return (
-    <div className="flex max-h-full flex-col ">
+    <Tabs
+      className="-mx-6 flex h-full max-h-full flex-col"
+      value="assets"
+      onValueChange={() => {
+        if (hasUnsavedChanges) {
+          setIsAlertOpen(true);
+          return;
+        }
+
+        navigate(manageKitsUrl);
+      }}
+    >
       <Header
         {...header}
         hideBreadcrumbs={true}
-        classNames="text-left mb-3 -mx-6 [&>div]:px-6 -mt-6"
+        classNames="text-left [&>div]:px-6 -mt-6 mx-0"
       />
 
-      <div className="-mx-6 justify-between border-b px-6 pb-4 md:flex">
-        <div className="flex md:w-1/2">
-          <div className="relative flex-1">
-            <Input
-              type="text"
-              name="s"
-              label={"Search"}
-              aria-label={"Search"}
-              placeholder={"Search assets by name"}
-              defaultValue={search || ""}
-              hideLabel={true}
-              hasAttachedButton
-              className=" h-full flex-1 [&>span]:hidden"
-              inputClassName="pr-9"
-              onKeyUp={(e) => {
-                setSearchValue(e.currentTarget.value);
-                if (e.key == "Enter") {
-                  e.preventDefault();
-                  if (searchValue) {
-                    handleSearch(searchValue);
-                  }
-                }
-              }}
-            />
-            {search ? (
-              <Button
-                icon="x"
-                variant="tertiary"
-                disabled={isSearching}
-                onClick={clearSearch}
-                title="Clear search"
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 cursor-pointer border-0 p-0 text-gray-400 hover:text-gray-700"
-              />
+      <div className="border-b px-6 py-2">
+        <TabsList className="w-full">
+          <TabsTrigger className="flex-1 gap-x-2" value="assets">
+            Assets{" "}
+            {selectedAssets.length > 0 ? (
+              <GrayBadge className="size-[20px] border border-primary-200 bg-primary-50 text-[10px] leading-[10px] text-primary-700">
+                {selectedAssets.length}
+              </GrayBadge>
             ) : null}
-          </div>
-
-          <Button
-            icon={isSearching ? "spinner" : "search"}
-            type="submit"
-            variant="secondary"
-            title="Search"
-            disabled={isSearching}
-            attachToInput
-            onClick={() => handleSearch(searchValue)}
-          />
-        </div>
-
-        <div className="mt-3 md:mt-0 md:w-[200px]">
-          <AvailabilitySelect />
-        </div>
+          </TabsTrigger>
+          <TabsTrigger className="flex-1 gap-x-2" value="kits">
+            Kits (beta)
+            {bookingKitIds.length > 0 ? (
+              <GrayBadge className="size-[20px] border border-primary-200 bg-primary-50 text-[10px] leading-[10px] text-primary-700">
+                {bookingKitIds.length}
+              </GrayBadge>
+            ) : null}
+          </TabsTrigger>
+        </TabsList>
       </div>
 
-      {/* Body of the modal*/}
-      <div className="-mx-6 flex-1 overflow-y-auto px-5 md:px-0">
+      <Filters
+        slots={{ "right-of-search": <AvailabilitySelect /> }}
+        className="justify-between !border-t-0 border-b px-6 md:flex"
+      />
+
+      <div className="flex justify-around gap-2 border-b p-3 lg:gap-4">
+        <DynamicDropdown
+          trigger={
+            <div className="flex h-6 cursor-pointer items-center gap-2">
+              Categories <ChevronRight className="hidden rotate-90 md:inline" />
+            </div>
+          }
+          model={{ name: "category", queryKey: "name" }}
+          label="Filter by category"
+          placeholder="Search categories"
+          initialDataKey="categories"
+          countKey="totalCategories"
+        />
+        <DynamicDropdown
+          trigger={
+            <div className="flex h-6 cursor-pointer items-center gap-2">
+              Tags <ChevronRight className="hidden rotate-90 md:inline" />
+            </div>
+          }
+          model={{ name: "tag", queryKey: "name" }}
+          label="Filter by tag"
+          initialDataKey="tags"
+          countKey="totalTags"
+        />
+        <DynamicDropdown
+          trigger={
+            <div className="flex h-6 cursor-pointer items-center gap-2">
+              Locations <ChevronRight className="hidden rotate-90 md:inline" />
+            </div>
+          }
+          model={{ name: "location", queryKey: "name" }}
+          label="Filter by location"
+          initialDataKey="locations"
+          countKey="totalLocations"
+          renderItem={({ metadata }) => (
+            <div className="flex items-center gap-2">
+              <Image
+                imageId={metadata.imageId}
+                alt="img"
+                className={tw(
+                  "size-6 rounded-[2px] object-cover",
+                  metadata.description ? "rounded-b-none border-b-0" : ""
+                )}
+              />
+              <div>{metadata.name}</div>
+            </div>
+          )}
+        />
+      </div>
+
+      <TabsContent value="assets" asChild>
         <List
+          className="mx-0 mt-0 h-full border-0 "
           ItemComponent={RowComponent}
           /** Clicking on the row will add the current asset to the atom of selected assets */
-          navigate={(assetId) => {
+          navigate={(assetId, asset) => {
+            /** Only allow user to select if the asset is available */
+            if (!asset.availableToBook || !!asset.kitId) {
+              return;
+            }
+
             setSelectedAssets((selectedAssets) =>
               selectedAssets.includes(assetId)
                 ? selectedAssets.filter((id) => id !== assetId)
                 : [...selectedAssets, assetId]
             );
           }}
+          emptyStateClassName="py-10"
           customEmptyStateContent={{
             title: "You haven't added any assets yet.",
             text: "What are you waiting for? Create your first asset now!",
             newButtonRoute: "/assets/new",
             newButtonContent: "New asset",
           }}
-          className="-mx-5 border-0"
         />
-      </div>
+      </TabsContent>
 
       {/* Footer of the modal */}
-      <footer className="item-center -mx-6 flex justify-between border-t px-6 pt-3">
+      <footer className="item-center flex justify-between border-t px-6 pt-3">
         <div className="flex items-center">
           {selectedAssets.length} assets selected
         </div>
@@ -321,7 +404,7 @@ export default function AddAssetsToNewBooking() {
           <Button variant="secondary" to={".."}>
             Close
           </Button>
-          <Form method="post">
+          <Form method="post" ref={formRef}>
             {/* We create inputs for both the removed and selected assets, so we can compare and easily add/remove */}
             {/* These are the asset ids, coming from the server */}
             {removedAssetIds.map((assetId, i) => (
@@ -341,6 +424,9 @@ export default function AddAssetsToNewBooking() {
                 value={assetId}
               />
             ))}
+            {hasUnsavedChanges && isAlertOpen ? (
+              <input name="redirectTo" value={manageKitsUrl} type="hidden" />
+            ) : null}
             <Button
               type="submit"
               name="intent"
@@ -352,7 +438,19 @@ export default function AddAssetsToNewBooking() {
           </Form>
         </div>
       </footer>
-    </div>
+
+      <UnsavedChangesAlert
+        type="assets"
+        open={isAlertOpen}
+        onOpenChange={setIsAlertOpen}
+        onCancel={() => {
+          navigate(manageKitsUrl);
+        }}
+        onYes={() => {
+          submit(formRef.current);
+        }}
+      />
+    </Tabs>
   );
 }
 
@@ -360,11 +458,16 @@ export type AssetWithBooking = Asset & {
   bookings: Booking[];
   custody: Custody | null;
   category: Category;
+  kitId?: string | null;
 };
 
 const RowComponent = ({ item }: { item: AssetWithBooking }) => {
   const selectedAssets = useAtomValue(bookingsSelectedAssetsAtom);
   const checked = selectedAssets.some((id) => id === item.id);
+
+  const isPartOfKit = !!item.kitId;
+  const isAddedThroughKit = isPartOfKit && checked;
+
   return (
     <>
       <Td className="w-full p-0 md:p-0">
@@ -392,13 +495,25 @@ const RowComponent = ({ item }: { item: AssetWithBooking }) => {
 
       <Td className="text-right">
         <AvailabilityLabel
+          isAddedThroughKit={isAddedThroughKit}
+          showKitStatus
           asset={item}
           isCheckedOut={item.status === "CHECKED_OUT"}
         />
       </Td>
 
       <Td>
-        <FakeCheckbox checked={checked} />
+        <FakeCheckbox
+          className={tw(
+            "text-white",
+            isPartOfKit ? "text-gray-100" : "",
+            checked ? "text-primary" : "",
+            isAddedThroughKit ? "text-gray-300" : ""
+          )}
+          fillColor={isPartOfKit ? "#F2F4F7" : undefined}
+          checked={checked}
+          aria-disabled={isPartOfKit}
+        />
       </Td>
     </>
   );

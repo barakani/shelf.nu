@@ -8,6 +8,7 @@ import type { HeaderData } from "~/components/layout/header/types";
 import { List } from "~/components/list";
 import { ListContentWrapper } from "~/components/list/content-wrapper";
 import { Filters } from "~/components/list/filters";
+import BulkActionsDropdown from "~/components/location/bulk-actions-dropdown";
 import { Button } from "~/components/shared/button";
 import { Image } from "~/components/shared/image";
 import { Td, Th } from "~/components/table";
@@ -24,7 +25,7 @@ import { getParamsValues } from "~/utils/list";
 import {
   PermissionAction,
   PermissionEntity,
-} from "~/utils/permissions/permission.validator.server";
+} from "~/utils/permissions/permission.data";
 import { requirePermission } from "~/utils/roles.server";
 import { tw } from "~/utils/tw";
 
@@ -104,11 +105,12 @@ export default function LocationsIndexPage() {
       <ListContentWrapper>
         <Filters />
         <List
+          bulkActions={<BulkActionsDropdown />}
           ItemComponent={ListItemContent}
           navigate={(itemId) => navigate(itemId)}
           headerChildren={
             <>
-              <Th className="hidden md:table-cell">Assets</Th>
+              <Th>Assets</Th>
             </>
           }
         />

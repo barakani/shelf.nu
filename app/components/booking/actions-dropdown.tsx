@@ -1,4 +1,4 @@
-import { useSubmit } from "@remix-run/react";
+import { useLoaderData, useSubmit } from "@remix-run/react";
 import { ChevronRight } from "~/components/icons/library";
 import {
   DropdownMenu,
@@ -7,24 +7,44 @@ import {
   DropdownMenuPortal,
   DropdownMenuTrigger,
 } from "~/components/shared/dropdown";
-import { useBookingStatus } from "~/hooks/use-booking-status";
-import { useUserIsSelfService } from "~/hooks/user-user-is-self-service";
-import type { BookingWithCustodians } from "~/routes/_layout+/bookings";
+import { useBookingStatusHelpers } from "~/hooks/use-booking-status";
+import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
+import type { loader } from "~/routes/_layout+/bookings.$bookingId";
+import {
+  PermissionAction,
+  PermissionEntity,
+} from "~/utils/permissions/permission.data";
+import { userHasPermission } from "~/utils/permissions/permission.validator.client";
 import { tw } from "~/utils/tw";
 import { DeleteBooking } from "./delete-booking";
+import { GenerateBookingPdf } from "./generate-booking-pdf";
+import { Divider } from "../layout/divider";
 import { Button } from "../shared/button";
+import When from "../when/when";
 
 interface Props {
-  booking: BookingWithCustodians;
   fullWidth?: boolean;
 }
 
-export const ActionsDropdown = ({ booking, fullWidth }: Props) => {
+export const ActionsDropdown = ({ fullWidth }: Props) => {
+  const { booking } = useLoaderData<typeof loader>();
   const { isCompleted, isOngoing, isReserved, isOverdue, isDraft } =
-    useBookingStatus(booking);
+    useBookingStatusHelpers(booking);
 
   const submit = useSubmit();
-  const isSelfService = useUserIsSelfService();
+  const { isBaseOrSelfService, roles } = useUserRoleHelper();
+
+  const canArchiveBooking = userHasPermission({
+    roles,
+    entity: PermissionEntity.booking,
+    action: PermissionAction.archive,
+  });
+
+  const canCancelBooking = userHasPermission({
+    roles,
+    entity: PermissionEntity.booking,
+    action: PermissionAction.cancel,
+  });
 
   return (
     <DropdownMenu modal={false}>
@@ -45,9 +65,11 @@ export const ActionsDropdown = ({ booking, fullWidth }: Props) => {
       <DropdownMenuPortal>
         <DropdownMenuContent
           align="end"
-          className="order w-[180px] rounded-md bg-white p-1.5 text-right "
+          className="order w-[220px] rounded-md bg-white p-1.5 text-right "
         >
-          {isOngoing || isReserved || isOverdue ? (
+          <When
+            truthy={(isOngoing || isReserved || isOverdue) && canCancelBooking}
+          >
             <DropdownMenuItem asChild>
               <Button
                 variant="link"
@@ -73,8 +95,8 @@ export const ActionsDropdown = ({ booking, fullWidth }: Props) => {
                 Cancel
               </Button>
             </DropdownMenuItem>
-          ) : null}
-          {isCompleted && !isSelfService ? (
+          </When>
+          <When truthy={isCompleted && canArchiveBooking}>
             <DropdownMenuItem asChild>
               <Button
                 variant="link"
@@ -100,10 +122,21 @@ export const ActionsDropdown = ({ booking, fullWidth }: Props) => {
                 Archive
               </Button>
             </DropdownMenuItem>
-          ) : null}
-          {(isSelfService && isDraft) || !isSelfService ? (
+          </When>
+
+          {/* Because SELF_SERVICE and BASE can only delete bookings they own and are in draft, we need to handle it like this, rather than with userHasPermission */}
+
+          <When
+            truthy={(isBaseOrSelfService && isDraft) || !isBaseOrSelfService}
+          >
             <DeleteBooking booking={booking} />
-          ) : null}
+          </When>
+
+          <Divider className="my-2" />
+          <GenerateBookingPdf
+            booking={booking}
+            timeStamp={new Date().getTime()}
+          />
         </DropdownMenuContent>
       </DropdownMenuPortal>
     </DropdownMenu>

@@ -10,25 +10,27 @@ import Sidebar from "~/components/layout/sidebar/sidebar";
 import { useCrisp } from "~/components/marketing/crisp";
 import { Spinner } from "~/components/shared/spinner";
 import { Toaster } from "~/components/shared/toast";
+import { NoSubscription } from "~/components/subscription/no-subscription";
 import { config } from "~/config/shelf.config";
-import { db } from "~/database/db.server";
 import { getSelectedOrganisation } from "~/modules/organization/context.server";
+import { getUserByID } from "~/modules/user/service.server";
 import styles from "~/styles/layout/index.css?url";
 import {
   initializePerPageCookieOnLayout,
   setCookie,
   userPrefs,
 } from "~/utils/cookies.server";
-import { ShelfError, makeShelfError } from "~/utils/error";
+import { makeShelfError } from "~/utils/error";
 import { data, error } from "~/utils/http.server";
 import type { CustomerWithSubscriptions } from "~/utils/stripe.server";
 
 import {
+  disabledTeamOrg,
   getCustomerActiveSubscription,
   getStripeCustomer,
   stripe,
 } from "~/utils/stripe.server";
-import { canUseBookings } from "~/utils/subscription";
+import { canUseBookings } from "~/utils/subscription.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: styles }];
 
@@ -38,44 +40,27 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
 
   try {
     // @TODO - we need to look into doing a select as we dont want to expose all data always
-    const user = await db.user
-      .findUniqueOrThrow({
-        where: { id: userId },
-        include: {
-          roles: true,
-          organizations: {
-            select: {
-              id: true,
-              name: true,
-              type: true,
-              imageId: true,
-            },
-          },
-          userOrganizations: {
-            where: {
-              userId: authSession.userId,
-            },
-            select: {
-              organization: true,
-              roles: true,
-            },
-          },
-          tier: {
-            select: {
-              tierLimit: true,
-            },
-          },
+    const user = await getUserByID(userId, {
+      roles: true,
+      organizations: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          imageId: true,
         },
-      })
-      .catch((cause) => {
-        throw new ShelfError({
-          cause,
-          message:
-            "We can't find your user data. Please try again or contact support.",
-          additionalData: { userId },
-          label: "App layout",
-        });
-      });
+      },
+      userOrganizations: {
+        where: {
+          userId: authSession.userId,
+        },
+        select: {
+          id: true,
+          organization: true,
+          roles: true,
+        },
+      },
+    });
 
     let subscription = null;
 
@@ -100,7 +85,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
      */
     const { organizationId, organizations, currentOrganization } =
       await getSelectedOrganisation({ userId: authSession.userId, request });
-
+    const isAdmin = user?.roles.some((role) => role.name === Roles["ADMIN"]);
     return json(
       data({
         user,
@@ -113,8 +98,16 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
         enablePremium: config.enablePremiumFeatures,
         hideSupportBanner: cookie.hideSupportBanner,
         minimizedSidebar: cookie.minimizedSidebar,
-        isAdmin: user?.roles.some((role) => role.name === Roles["ADMIN"]),
+        isAdmin,
         canUseBookings: canUseBookings(currentOrganization),
+        /** THis is used to disable team organizations when the currentOrg is Team and no subscription is present  */
+        disabledTeamOrg: isAdmin
+          ? false
+          : await disabledTeamOrg({
+              currentOrganization,
+              organizations,
+              url: request.url,
+            }),
       }),
       {
         headers: [setCookie(await userPrefs.serialize(cookie))],
@@ -128,7 +121,8 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
 
 export default function App() {
   useCrisp();
-  const { currentOrganizationId } = useLoaderData<typeof loader>();
+  const { currentOrganizationId, disabledTeamOrg } =
+    useLoaderData<typeof loader>();
   const [workspaceSwitching] = useAtom(switchingWorkspaceAtom);
 
   return (
@@ -142,7 +136,9 @@ export default function App() {
           <Sidebar />
           <main className=" flex-1 bg-gray-25 px-4 pb-6 md:w-[calc(100%-312px)]">
             <div className="flex h-full flex-1 flex-col">
-              {workspaceSwitching ? (
+              {disabledTeamOrg ? (
+                <NoSubscription />
+              ) : workspaceSwitching ? (
                 <div className="flex size-full flex-col items-center justify-center text-center">
                   <Spinner />
                   <p className="mt-2">Activating workspace...</p>

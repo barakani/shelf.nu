@@ -8,6 +8,7 @@ import type {
 import { db } from "~/database/db.server";
 import type { ErrorLabel } from "~/utils/error";
 import { ShelfError, maybeUniqueConstraintViolation } from "~/utils/error";
+import { ALL_SELECTED_KEY } from "~/utils/list";
 import type { CreateAssetFromContentImportPayload } from "../asset/types";
 
 const label: ErrorLabel = "Tag";
@@ -133,11 +134,15 @@ export async function createTagsIfNotExists({
 }): Promise<Record<string, TeamMember["id"]>> {
   try {
     const tags = data
-      .filter(({ tags }) => tags.length > 0)
+      .filter(({ tags }) => tags?.length > 0)
       .reduce((acc: Record<string, string>, curr) => {
         curr.tags.forEach((tag) => tag !== "" && (acc[tag.trim()] = ""));
         return acc;
       }, {});
+    // Handle the case where there are no tags
+    if (!Object.keys(tags).length) {
+      return {};
+    }
 
     // now we loop through the categories and check if they exist
     for (const tag of Object.keys(tags)) {
@@ -177,9 +182,11 @@ export async function createTagsIfNotExists({
     throw new ShelfError({
       cause,
       message:
-        "Something went wrong while creating the tags. Please try again or contact support.",
+        "Something went wrong while creating the tags. Seems like some of the tag data in your import file is invalid. Please check and try again.",
       additionalData: { userId, organizationId },
       label,
+      /** No need to capture those. They are mostly related to malformed CSV data */
+      shouldBeCaptured: false,
     });
   }
 }
@@ -229,6 +236,29 @@ export async function updateTag({
         id,
         organizationId,
       },
+    });
+  }
+}
+
+export async function bulkDeleteTags({
+  tagIds,
+  organizationId,
+}: {
+  tagIds: Tag["id"][];
+  organizationId: Organization["id"];
+}) {
+  try {
+    return await db.tag.deleteMany({
+      where: tagIds.includes(ALL_SELECTED_KEY)
+        ? { organizationId }
+        : { id: { in: tagIds }, organizationId },
+    });
+  } catch (cause) {
+    throw new ShelfError({
+      cause,
+      message: "Something went wrong while bulk deleting tags.",
+      additionalData: { tagIds, organizationId },
+      label,
     });
   }
 }

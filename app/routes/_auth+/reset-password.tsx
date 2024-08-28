@@ -6,9 +6,10 @@ import type {
   MetaFunction,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, useActionData, useNavigation } from "@remix-run/react";
+import { useActionData, useNavigation } from "@remix-run/react";
 import { useZorm } from "react-zorm";
 import { z } from "zod";
+import { Form } from "~/components/custom-form";
 
 import PasswordInput from "~/components/forms/password-input";
 import { Button } from "~/components/shared/button";
@@ -69,12 +70,13 @@ export async function action({ context, request }: ActionFunctionArgs) {
 
         const authSession = await refreshAccessToken(refreshToken);
 
-        await updateAccountPassword(authSession.userId, password);
-
-        // Commit the session and redirect
-        context.setSession({ ...authSession });
-
-        return redirect("/");
+        await updateAccountPassword(
+          authSession.userId,
+          password,
+          authSession.accessToken
+        );
+        context.destroySession();
+        return redirect("/login?password_reset=true");
       }
     }
 

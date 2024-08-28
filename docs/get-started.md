@@ -61,6 +61,9 @@ SUPABASE_URL="https://{STAGING_YOUR_INSTANCE_NAME}.supabase.co"
 SESSION_SECRET="super-duper-s3cret"
 SERVER_URL="http://localhost:3000"
 
+# Used for generating cuid with lowered chance of collision. Optional
+FINGERPRINT="a-custom-host-fingerprint"
+
 SMTP_HOST="smtp.yourhost.com"
 SMTP_USER="you@example.com"
 SMTP_PWD="yourSMTPpassword"
@@ -82,15 +85,6 @@ INVITE_TOKEN_SECRET="secret-test-invite"
 GEOCODE_API_KEY="geocode-api-key"
 ```
 
-- Add your `ADMIN_EMAIL`, `ADMIN_USERNAME`and `ADMIN_PASSWORD` in the `.env` file. This will create the first user during the seed of the Database.
-
-  ```
-  # Used for DB Setup
-  ADMIN_EMAIL="admin@localhost.com"
-  ADMIN_USERNAME="admin"
-  ADMIN_PASSWORD="changeme"
-  ```
-
 - This step only applies if you've opted out of having the CLI install dependencies for you:
 
   ```sh
@@ -110,11 +104,6 @@ GEOCODE_API_KEY="geocode-api-key"
   ```
 
 This starts your app in development mode, rebuilding assets on file changes.
-
-The database seed script creates a new user with some data you can use to get started:
-
-- Email: `hello@supabase.com`
-- Password: `supabase`
 
 > [!CAUTION]
 > During development involving Dockerfile changes, make sure to **address the correct file** in your builds:
@@ -186,6 +175,7 @@ Prior to your first deployment, you'll need to do a few things:
   fly secrets set DATABASE_URL="postgres://{USER}:{PASSWORD}@{HOST}:6543/{DB_NAME}?pgbouncer=true&connection_limit=1"
   fly secrets set SERVER_URL="https://{YOUR_STAGING_SERVEUR_URL}"
   fly secrets set MAPTILER_TOKEN="{YOUR_MAPTILER_TOKEN}"
+  fly secrets set FINGERPRINT=$(openssl rand -hex 32)
 
   fly secrets set SMTP_HOST="smtp.yourhost.com"
   fly secrets set SMTP_USER="you@example.com"
@@ -223,6 +213,11 @@ For File storage we use the S3 buckets service provided by supabase. We do this 
 
 1. Create a bucket called `assets`
 2. Implement a policy for `SELECT`, `INSERT`, `UPDATE` & `DELETE`. The policy expression is: `((bucket_id = 'assets'::text) AND ((storage.foldername(name))[1] = (auth.uid())::text))` and target roles should be set to `authenticated`
+
+### Kits
+
+1. Create a bucket called `kits`
+2. Implement a policy for `SELECT`, `INSERT`, `UPDATE` & `DELETE`. The policy expression is: `((bucket_id = 'kits'::text) AND ((storage.foldername(name))[1] = (auth.uid())::text))` and target roles should be set to `authenticated`
 
 ## GitHub Actions
 

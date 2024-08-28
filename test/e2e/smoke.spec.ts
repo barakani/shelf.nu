@@ -93,7 +93,7 @@ test("should allow you to assign custody of an asset", async ({
 
   await page.locator('[data-test-id="assetActionsButton"]').click();
   await page.getByRole("link", { name: "Assign custody" }).click();
-  await expect(page).toHaveURL(/.*assets\/[^]*\/give-custody/);
+  await expect(page).toHaveURL(/.*assets\/[^]*\/assign-custody/);
   await page.getByRole("combobox").click();
   await page
     .getByRole("option", { name: teamMemberName })
@@ -138,8 +138,8 @@ test("should allow you to release custody of an asset", async ({
   ).toBeVisible();
 
   await page.locator('[data-test-id="assetActionsButton"]').click();
-  await page.getByRole("link", { name: "Release custody" }).click();
-  await expect(page).toHaveURL(/.*assets\/[^]*\/release-custody/);
+  await page.getByRole("link", { name: "Assign custody" }).click();
+  await expect(page).toHaveURL(/.*assets\/[^]*\/assign-custody/);
   await page.getByRole("button", { name: "Confirm" }).click();
 
   /** Make sure the status of the asset is changed */

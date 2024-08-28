@@ -39,7 +39,7 @@ import { parseMarkdownToReact } from "~/utils/md.server";
 import {
   PermissionAction,
   PermissionEntity,
-} from "~/utils/permissions/permission.validator.server";
+} from "~/utils/permissions/permission.data";
 import { requirePermission } from "~/utils/roles.server";
 
 export async function loader({ context, request }: LoaderFunctionArgs) {
@@ -74,6 +74,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
                       firstName: true,
                       lastName: true,
                       profilePicture: true,
+                      email: true,
                     },
                   },
                 },

@@ -22,7 +22,7 @@ import Input from "../forms/input";
 import { CheckIcon } from "../icons/library";
 import { Button } from "../shared/button";
 
-import type { Icon } from "../shared/icons-map";
+import type { IconType } from "../shared/icons-map";
 import { Spinner } from "../shared/spinner";
 import When from "../when/when";
 
@@ -31,22 +31,40 @@ type Props = ModelFilterProps & {
   style?: React.CSSProperties;
   trigger: React.ReactElement;
   label?: string;
-  searchIcon?: Icon;
+  /** Overwrite the default placeholder will will be `Search ${model.name}s` */
+  placeholder?: string;
+  searchIcon?: IconType;
   showSearch?: boolean;
   renderItem?: (item: ModelFilterItem) => React.ReactNode;
+  /**
+   * A a new item will be added to the list in dropdown, this item can be used to filter items
+   * like "uncategorized" or "untagged" etc.
+   */
+  withoutValueItem?: {
+    id: string;
+    name: string;
+  };
+
+  /**
+   * If `true`, a "Select All" item will be added in dropdown which allow
+   * the user to select all items in the list
+   */
+  allowSelectAll?: boolean;
 };
 
 export default function DynamicDropdown({
   className,
   style,
   label = "Filter",
+  placeholder,
   trigger,
   searchIcon = "search",
   model,
-  initialDataKey,
-  countKey,
   showSearch = true,
   renderItem,
+  withoutValueItem,
+  allowSelectAll,
+  ...hookProps
 }: Props) {
   const navigation = useNavigation();
   const isSearching = isFormProcessing(navigation.state);
@@ -63,11 +81,8 @@ export default function DynamicDropdown({
     clearFilters,
     resetModelFiltersFetcher,
     getAllEntries,
-  } = useModelFilters({
-    model,
-    countKey,
-    initialDataKey,
-  });
+    handleSelectAll,
+  } = useModelFilters({ model, ...hookProps });
 
   return (
     <div className="relative w-full text-center">
@@ -114,8 +129,10 @@ export default function DynamicDropdown({
               <div className="filters-form relative border-y border-y-gray-200 p-3">
                 <Input
                   type="text"
-                  label={`Search ${label}`}
-                  placeholder={`Search ${label}`}
+                  label={label}
+                  placeholder={
+                    placeholder ? placeholder : `Search ${model.name}s`
+                  }
                   hideLabel
                   className="text-gray-500"
                   icon={searchIcon}
@@ -142,19 +159,76 @@ export default function DynamicDropdown({
               {searchQuery !== "" && items.length === 0 && (
                 <EmptyState searchQuery={searchQuery} modelName={model.name} />
               )}
+
+              {/* Top Divider */}
+              <When truthy={Boolean(allowSelectAll || withoutValueItem)}>
+                <div className="h-2 w-full  bg-gray-50" />
+              </When>
+
+              <When truthy={!!allowSelectAll}>
+                <label
+                  key="select-all"
+                  className="flex cursor-pointer select-none items-center justify-between px-6 py-4  text-sm font-medium outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-gray-100 focus:bg-gray-100"
+                  onClick={handleSelectAll}
+                >
+                  <span className="pr-2">Select all</span>
+                </label>
+              </When>
+
+              <When truthy={Boolean(withoutValueItem)}>
+                <label
+                  key={withoutValueItem?.id}
+                  htmlFor={withoutValueItem?.id}
+                  className={tw(
+                    "flex cursor-pointer select-none items-center justify-between px-6 py-4 text-sm font-medium outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-gray-100 focus:bg-gray-100",
+                    selectedItems.includes(withoutValueItem?.id ?? "") &&
+                      "bg-gray-50"
+                  )}
+                >
+                  <span className="pr-2 normal-case">
+                    {withoutValueItem?.name}
+                    <input
+                      id={withoutValueItem?.id}
+                      type="checkbox"
+                      value={withoutValueItem?.id}
+                      className="hidden"
+                      checked={selectedItems.includes(
+                        withoutValueItem?.id ?? ""
+                      )}
+                      onChange={(e) => {
+                        handleSelectItemChange(e.currentTarget.value);
+                      }}
+                    />
+                  </span>
+
+                  <When
+                    truthy={selectedItems.includes(withoutValueItem?.id ?? "")}
+                  >
+                    <CheckIcon className="text-primary" />
+                  </When>
+                </label>
+              </When>
+
+              {/* Bottom Divider */}
+              <When truthy={Boolean(allowSelectAll || withoutValueItem)}>
+                <div className="h-2 w-full  bg-gray-50" />
+              </When>
+
               {items.map((item) => {
                 const checked = selectedItems.includes(item.id);
-                if (typeof renderItem === "function") {
-                  return (
-                    <label
-                      key={item.id}
-                      htmlFor={item.id}
-                      className={tw(
-                        "flex cursor-pointer select-none items-center justify-between px-6 py-4 text-sm font-medium outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-gray-100 focus:bg-gray-100",
-                        checked && "bg-gray-50"
-                      )}
-                    >
-                      {renderItem({ ...item, metadata: item })}
+                return (
+                  <label
+                    key={item.id}
+                    htmlFor={item.id}
+                    className={tw(
+                      "flex cursor-pointer select-none items-center justify-between px-6 py-4  text-sm font-medium outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-gray-100 focus:bg-gray-100",
+                      checked && "bg-gray-50"
+                    )}
+                  >
+                    <span className="pr-2">
+                      {typeof renderItem === "function"
+                        ? renderItem({ ...item, metadata: item })
+                        : item.name}
                       <input
                         id={item.id}
                         type="checkbox"
@@ -165,33 +239,8 @@ export default function DynamicDropdown({
                           handleSelectItemChange(e.currentTarget.value);
                         }}
                       />
-                      <When truthy={checked}>
-                        <CheckIcon className="text-primary" />
-                      </When>
-                    </label>
-                  );
-                }
+                    </span>
 
-                return (
-                  <label
-                    key={item.id}
-                    htmlFor={item.id}
-                    className={tw(
-                      "flex cursor-pointer select-none items-center justify-between px-6 py-4 text-sm font-medium outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-gray-100 focus:bg-gray-100",
-                      checked && "bg-gray-50"
-                    )}
-                  >
-                    {item.name}
-                    <input
-                      id={item.id}
-                      type="checkbox"
-                      value={item.id}
-                      className="hidden"
-                      checked={checked}
-                      onChange={(e) => {
-                        handleSelectItemChange(e.currentTarget.value);
-                      }}
-                    />
                     <When truthy={checked}>
                       <CheckIcon className="text-primary" />
                     </When>
@@ -216,10 +265,10 @@ export default function DynamicDropdown({
                 </button>
               )}
             </div>
-            <When truthy={totalItems > 6}>
+            <When truthy={withoutValueItem ? totalItems > 7 : totalItems > 6}>
               <div className="border-t p-3 text-gray-500">
-                Showing {items.length} out of {totalItems}, type to search for
-                more
+                Showing {withoutValueItem ? items.length - 1 : items.length} out
+                of {totalItems}, type to search for more
               </div>
             </When>
 

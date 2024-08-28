@@ -79,13 +79,18 @@ export type FailureReason = {
     | "Tier"
     | "User"
     | "Scanner"
+    | "Kit"
+    | "Note"
     // Other kinds of errors
+    | "DB"
     | "Request validation"
     | "DB constrain violation"
     | "Dev error" // Error that should never happen in production because it's a developer mistake
     | "Environment"; // Related to the environment setup
   /**
    * The message intended for the user.
+   * You can add new lines using \n which will be parsed into paragraphs in the html
+   * Moveoer, you can add html to highlight strings
    */
   message: string;
   /**

@@ -47,7 +47,7 @@ import { getParamsValues } from "~/utils/list";
 import {
   PermissionAction,
   PermissionEntity,
-} from "~/utils/permissions/permission.validator.server";
+} from "~/utils/permissions/permission.data";
 import { requirePermission } from "~/utils/roles.server";
 import { tw } from "~/utils/tw";
 
@@ -237,13 +237,7 @@ export default function LocationPage() {
         <div className=" w-full lg:ml-8 lg:w-[calc(100%-282px)]">
           <TextualDivider text="Assets" className="mb-8 lg:hidden" />
           <div className="mb-3 flex gap-4 lg:hidden">
-            <Button
-              as="button"
-              to="add-assets"
-              variant="primary"
-              icon="plus"
-              width="full"
-            >
+            <Button as="button" to="add-assets" variant="primary" width="full">
               Manage assets
             </Button>
             <div className="w-full">
@@ -258,7 +252,7 @@ export default function LocationPage() {
                     as="button"
                     to="add-assets"
                     variant="primary"
-                    icon="plus"
+                    className="whitespace-nowrap"
                   >
                     Manage assets
                   </Button>
@@ -270,8 +264,8 @@ export default function LocationPage() {
               navigate={(itemId) => navigate(`/assets/${itemId}`)}
               headerChildren={
                 <>
-                  <Th className="hidden md:table-cell">Category</Th>
-                  <Th className="hidden md:table-cell">Tags</Th>
+                  <Th>Category</Th>
+                  <Th>Tags</Th>
                 </>
               }
               customEmptyStateContent={{
@@ -331,14 +325,14 @@ const ListAssetContent = ({
           </button>
         </div>
       </Td>
-      <Td className="hidden md:table-cell">
+      <Td>
         {category ? (
           <Badge color={category.color} withDot={false}>
             {category.name}
           </Badge>
         ) : null}
       </Td>
-      <Td className="hidden text-left md:table-cell">
+      <Td className="text-left">
         <ListItemTagsColumn tags={tags} />
       </Td>
     </>

@@ -1,13 +1,16 @@
-import type { User } from "@prisma/client";
+import type { Organization, User } from "@prisma/client";
 import Stripe from "stripe";
 import type { PriceWithProduct } from "~/components/subscription/prices";
 import { config } from "~/config/shelf.config";
 import { db } from "~/database/db.server";
+import { getOrganizationByUserId } from "~/modules/organization/service.server";
+import { getOrganizationTierLimit } from "~/modules/tier/service.server";
 import { STRIPE_SECRET_KEY } from "./env";
 import type { ErrorLabel } from "./error";
 import { ShelfError } from "./error";
 
 const label: ErrorLabel = "Stripe";
+export const premiumIsEnabled = config.enablePremiumFeatures;
 
 export type CustomerWithSubscriptions = Stripe.Customer & {
   subscriptions: {
@@ -22,7 +25,7 @@ let _stripe: Stripe;
 function getStripeServerClient() {
   if (
     !_stripe &&
-    config.enablePremiumFeatures &&
+    premiumIsEnabled &&
     STRIPE_SECRET_KEY !== "" &&
     typeof STRIPE_SECRET_KEY === "string"
   ) {
@@ -63,11 +66,15 @@ export async function createStripeCheckoutSession({
   userId,
   domainUrl,
   customerId,
+  intent,
+  shelfTier,
 }: {
   priceId: Stripe.Price["id"];
   userId: User["id"];
   domainUrl: string;
   customerId: string;
+  intent: "trial" | "subscribe";
+  shelfTier: "tier_1" | "tier_2";
 }): Promise<string> {
   try {
     if (!stripe) {
@@ -97,14 +104,32 @@ export async function createStripeCheckoutSession({
       },
     ];
 
+    const successUrl = await generateReturnUrl({
+      userId,
+      shelfTier,
+      intent,
+      domainUrl,
+    });
+
     const { url } = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: lineItems,
-      success_url: `${domainUrl}/settings/subscription?success=true`,
-      cancel_url: `${domainUrl}/settings/subscription?canceled=true`,
+      success_url: successUrl,
+      cancel_url: `${domainUrl}/account-details/subscription?canceled=true`,
       client_reference_id: userId,
       customer: customerId,
+      ...(intent === "trial" && {
+        subscription_data: {
+          trial_settings: {
+            end_behavior: {
+              missing_payment_method: "pause",
+            },
+          },
+          trial_period_days: 14,
+        },
+        payment_method_collection: "if_required",
+      }),
     });
 
     if (!url) {
@@ -115,7 +140,6 @@ export async function createStripeCheckoutSession({
         label,
       });
     }
-
     return url;
   } catch (cause) {
     throw new ShelfError({
@@ -152,7 +176,10 @@ function groupPricesByInterval(prices: PriceWithProduct[]) {
   const groupedPrices: { [key: string]: PriceWithProduct[] } = {};
 
   for (const price of prices) {
-    if (price?.recurring?.interval) {
+    if (
+      price?.recurring?.interval &&
+      price.metadata?.show_on_table === "true"
+    ) {
       const interval = price?.recurring?.interval;
       if (!groupedPrices[interval]) {
         groupedPrices[interval] = [];
@@ -183,7 +210,7 @@ export const createStripeCustomer = async ({
   userId: User["id"];
 }) => {
   try {
-    if (config.enablePremiumFeatures && stripe) {
+    if (premiumIsEnabled && stripe) {
       const { id: customerId } = await stripe.customers.create({
         email,
         name,
@@ -233,7 +260,7 @@ export async function createBillingPortalSession({
   try {
     const { url } = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: `${process.env.SERVER_URL}/settings/subscription`,
+      return_url: `${process.env.SERVER_URL}/account-details/subscription`,
     });
 
     return { url };
@@ -276,7 +303,8 @@ export function getActiveProduct({
   return null;
 }
 
-export function getCustomerActiveSubscription({
+/** Gets the customer's paid subscription */
+export function getCustomerPaidSubscription({
   customer,
 }: {
   customer: CustomerWithSubscriptions | null;
@@ -285,6 +313,8 @@ export function getCustomerActiveSubscription({
     customer?.subscriptions?.data.find((sub) => sub.status === "active") || null
   );
 }
+
+/** Gets the trial subscription from customers subscription */
 export function getCustomerTrialSubscription({
   customer,
 }: {
@@ -294,6 +324,21 @@ export function getCustomerTrialSubscription({
     customer?.subscriptions?.data.find((sub) => sub.status === "trialing") ||
     null
   );
+}
+
+export function getCustomerActiveSubscription({
+  customer,
+}: {
+  customer: CustomerWithSubscriptions | null;
+}) {
+  /** Get the trial subscription */
+  const trialSubscription = getCustomerTrialSubscription({ customer });
+
+  /** Get a normal subscription */
+  const paidSubscription = getCustomerPaidSubscription({ customer });
+
+  /** WE prioritize active subscrption over trial */
+  return paidSubscription || trialSubscription;
 }
 
 export async function fetchStripeSubscription(id: string) {
@@ -333,6 +378,83 @@ export async function getDataFromStripeEvent(event: Stripe.Event) {
       message: "Something went wrong while fetching data from Stripe event",
       additionalData: { event },
       label,
+      status: 500,
     });
   }
+}
+
+export const disabledTeamOrg = async ({
+  currentOrganization,
+  organizations,
+  url,
+}: {
+  organizations: Pick<
+    Organization,
+    "id" | "type" | "name" | "imageId" | "userId"
+  >[];
+  currentOrganization: Pick<Organization, "id" | "type">;
+  url: string;
+}) => {
+  if (!premiumIsEnabled) return false;
+  /**
+   * We need to check a few things before disabling team orgs
+   *
+   * 1. The current organization is a team
+   * 2. The current tier has to be tier_2. Anything else is not allowed
+   * 3. We need to check the url as the user should be allowed to access certain urls, even if the current org is a team org and they are Self service
+   */
+
+  /** All account details routes should be accessible always */
+  if (url.includes("account-details")) return false;
+
+  const tierLimit = await getOrganizationTierLimit({
+    organizationId: currentOrganization.id,
+    organizations,
+  });
+
+  return (
+    currentOrganization.type === "TEAM" &&
+    ["free", "tier_1"].includes(tierLimit?.id)
+  );
+};
+
+/** Generates the redirect URL based on relevant data */
+async function generateReturnUrl({
+  userId,
+  shelfTier,
+  intent,
+  domainUrl,
+}: {
+  userId: User["id"];
+  shelfTier: "tier_1" | "tier_2" | "free" | "custom";
+  intent: "trial" | "subscribe";
+  domainUrl: string;
+}) {
+  /**
+   * Here we have a few cases:
+   * 1. If its trial and tier_2, and they dont own team workspaces we redirect them to create a team workspace - we can safely assume that is their first entrance
+   * 3. If its any other tier, we redirect them to /account-details/subscription
+   */
+
+  /** We do a small try/catch to prevent throwing as we just need to continue */
+  let userTeamOrg;
+  try {
+    userTeamOrg = await getOrganizationByUserId({
+      userId,
+      orgType: "TEAM",
+    });
+  } catch (cause) {
+    userTeamOrg = null;
+  }
+
+  const urlSearchParams = new URLSearchParams({
+    success: "true",
+    team: shelfTier === "tier_2" ? "true" : "",
+    ...(intent === "trial" && { trial: "true" }),
+    ...(userTeamOrg && { hasExistingWorkspace: "true" }),
+  });
+
+  return shelfTier === "tier_2" && !userTeamOrg // If the user is on tier_2, and they dont already OWN a team org we redirect them to create a team workspace
+    ? `${domainUrl}/account-details/workspace/new?${urlSearchParams.toString()}`
+    : `${domainUrl}/account-details/subscription?${urlSearchParams.toString()}`;
 }

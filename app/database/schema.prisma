@@ -1,6 +1,6 @@
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -30,22 +30,24 @@ model Image {
 }
 
 model User {
-  id             String  @id @default(cuid())
-  email          String  @unique
-  username       String  @unique @default(cuid())
-  firstName      String?
-  lastName       String?
-  profilePicture String?
-  onboarded      Boolean @default(false)
-  customerId     String? @unique // Stripe customer id
-  tierId         TierId  @default(free)
-  tier           Tier    @relation(fields: [tierId], references: [id])
+  id                String  @id @default(cuid())
+  email             String  @unique
+  username          String  @unique @default(cuid())
+  firstName         String?
+  lastName          String?
+  profilePicture    String?
+  usedFreeTrial     Boolean @default(false)
+  onboarded         Boolean @default(false)
+  customerId        String? @unique // Stripe customer id
+  sso               Boolean @default(false)
+  createdWithInvite Boolean @default(false) // Set to true if the user was created by being invited to a workspace
 
   // Datetime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relationships
+
   assets            Asset[]
   categories        Category[]
   notes             Note[]
@@ -63,6 +65,12 @@ model User {
   userOrganizations UserOrganization[]
   bookings          Booking[]          @relation("creator")
   custodies         Booking[]          @relation("custodian")
+  createdKits       Kit[]
+  tierId            TierId             @default(free)
+  tier              Tier               @relation(fields: [tierId], references: [id])
+
+  // This relationship will be used only when tierId == custom
+  customTierLimit CustomTierLimit?
 
   @@unique([email, username])
 }
@@ -90,6 +98,8 @@ model Asset {
   categoryId     String?
   location       Location?    @relation(fields: [locationId], references: [id])
   locationId     String?
+  kit            Kit?         @relation(fields: [kitId], references: [id])
+  kitId          String?
 
   custody         Custody?
   notes           Note[]
@@ -136,6 +146,8 @@ model Category {
   user   User    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   userId String
 
+  customFields CustomField[]
+
   organization   Organization @relation(fields: [organizationId], references: [id], onUpdate: Cascade)
   organizationId String
 
@@ -159,7 +171,7 @@ model Tag {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
- //@@unique([lower(name), organizationId]) //prisma doesnt support case insensitive unique index yet
+  //@@unique([lower(name), organizationId]) //prisma doesnt support case insensitive unique index yet
 }
 
 model Note {
@@ -196,15 +208,39 @@ model Qr {
   asset   Asset?  @relation(fields: [assetId], references: [id], onDelete: SetNull)
   assetId String?
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  userId String
+  kit   Kit?    @relation(fields: [kitId], references: [id], onDelete: SetNull)
+  kitId String?
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onUpdate: Cascade)
-  organizationId String
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  userId String?
+
+  organization   Organization? @relation(fields: [organizationId], references: [id], onUpdate: Cascade)
+  organizationId String?
+
+  // This batch is used to group QR codes together when they are created as unclaimed and printed
+  batch   PrintBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  batchId String?
+
   // DateTime
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  scans          Scan[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  scans     Scan[]
+}
+
+model PrintBatch {
+  id String @id @default(cuid())
+
+  name String @unique
+
+  // This should be set to true, when QR code is exported for print
+  printed Boolean @default(false)
+
+  // Relationships
+  qrCodes Qr[]
+
+  // DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Stores a report for when a an asset is reported as found
@@ -218,8 +254,11 @@ model ReportFound {
   updatedAt DateTime @updatedAt
 
   // Relationships
-  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  assetId String
+  asset   Asset?  @relation(fields: [assetId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  assetId String?
+
+  kit   Kit?    @relation(fields: [kitId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  kitId String?
 }
 
 enum ErrorCorrection {
@@ -246,6 +285,9 @@ model Scan {
 
   // We also store the qrId as a raw string for reference is fhte qr is deleted
   rawQrId String
+
+  // This will be true if the user manually created the scan by using "Update GPS coordinates"
+  manuallyGenerated Boolean @default(false)
 
   // DateTime
   createdAt DateTime @default(now())
@@ -274,7 +316,7 @@ model Location {
 
   assets Asset[]
 
- // @@unique([lower(name), organizationId]) //prisma doesnt support case insensitive unique index yet
+  // @@unique([lower(name), organizationId]) //prisma doesnt support case insensitive unique index yet
 }
 
 // Master data for roles
@@ -297,17 +339,18 @@ model TeamMember {
   id   String @id @unique @default(cuid())
   name String
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onUpdate: Cascade)
-  organizationId String
+  organization    Organization @relation(fields: [organizationId], references: [id], onUpdate: Cascade)
+  organizationId  String
   custodies       Custody[]
   receivedInvites Invite[]
-  user            User?          @relation(fields: [userId], references: [id], onUpdate: Cascade)
+  user            User?        @relation(fields: [userId], references: [id], onUpdate: Cascade)
   userId          String?
+  kitCustodies    KitCustody[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
-  bookings   Booking[]
+  bookings  Booking[]
 }
 
 model Custody {
@@ -339,8 +382,12 @@ model Organization {
   image   Image?  @relation("orgImage", fields: [imageId], references: [id])
   imageId String? @unique
 
-  // members           TeamMember[]
-  // assets            Asset[]
+  // Not required. It will only be created for orgs that need sso
+  // We can know if an org has SSO by checking the ssoDetailsId
+  enabledSso   Boolean     @default(false) // If true, the organization has enabled SSO. This cannot be changed by the user, just managed by the admin
+  ssoDetailsId String?
+  ssoDetails   SsoDetails? @relation(fields: [ssoDetailsId], references: [id])
+
   locations         Location[]
   categories        Category[]
   tags              Tag[]
@@ -353,6 +400,7 @@ model Organization {
   customFields CustomField[]
   images       Image[]       @relation("owner")
   bookings     Booking[]
+  kits         Kit[]
 }
 
 model UserOrganization {
@@ -377,9 +425,26 @@ enum OrganizationType {
 
 enum OrganizationRoles {
   ADMIN
-  TEAM_MEMBER
+  BASE
   OWNER
   SELF_SERVICE
+}
+
+model SsoDetails {
+  id String @id @default(cuid())
+
+  // The domain of the organization
+  domain String
+
+  organizations Organization[]
+
+  baseUserGroupId    String? // The group id for BASE users
+  selfServiceGroupId String? // The group id for SELF_SERVICE users
+  adminGroupId       String? // The group id for ADMIN users
+
+  // Datetime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Tier Ids are used to identify tiers (products) in Stripe. They must be predictable in our model.
@@ -389,6 +454,7 @@ enum TierId {
   free
   tier_1
   tier_2
+  custom
 }
 
 // Tiers correspond to Stripe products
@@ -402,13 +468,30 @@ model Tier {
   updatedAt   DateTime   @updatedAt
 }
 
+// TierLimit is used for the basic tiers
 model TierLimit {
   id               TierId   @id
   tier             Tier?
   canImportAssets  Boolean  @default(false)
   canExportAssets  Boolean  @default(false)
+  canImportNRM     Boolean  @default(false)
   maxCustomFields  Int      @default(0)
   maxOrganizations Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// CustomTierLimit is used for users which has Tier with ID: custom
+model CustomTierLimit {
+  id               String   @id @unique @default(cuid())
+  user             User?    @relation(fields: [userId], references: [id])
+  userId           String?  @unique // This is the foreign key
+  canImportAssets  Boolean  @default(true)
+  canExportAssets  Boolean  @default(true)
+  canImportNRM     Boolean  @default(true)
+  maxCustomFields  Int      @default(1000)
+  maxOrganizations Int      @default(1)
+  isEnterprise     Boolean  @default(false) // Set this to true for enterprise users. It is used to control some visuals in the app
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
@@ -429,6 +512,8 @@ model CustomField {
 
   createdBy User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   userId    String
+
+  categories Category[]
 
   // Datetime
   createdAt               DateTime                @default(now())
@@ -473,9 +558,11 @@ enum Currency {
   CAD // Canadian Dollar
   CHF // Swiss Franc
   CNY // Chinese Yuan
+  DKK // Danish Krone
   INR // Indian Rupee
   ZAR // South African Rand
   BRL // Brazilian Real
+  MYR // Malaysian Ringgit
   MXN // Mexican Peso
   SGD // Singapore Dollar
   NZD // New Zealand Dollar
@@ -486,6 +573,7 @@ enum Currency {
   HKD // Hong Kong Dollar
   SAR // Saudi Riyal
   AED // United Arab Emirates Dirham
+  PLN // Polish Zloty
 }
 
 enum InviteStatuses {
@@ -547,16 +635,17 @@ enum BookingStatus {
 model Booking {
   id String @id @default(cuid())
 
-  name   String
-  status BookingStatus @default(DRAFT)
+  name        String
+  status      BookingStatus @default(DRAFT)
+  description String?       @default("")
 
-  activeSchedulerReference   String?
+  activeSchedulerReference String?
 
   // Relationships
   creator   User   @relation("creator", fields: [creatorId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   creatorId String
 
-  custodianUser   User?  @relation("custodian", fields: [custodianUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  custodianUser   User?   @relation("custodian", fields: [custodianUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   custodianUserId String?
 
   custodianTeamMember   TeamMember? @relation(fields: [custodianTeamMemberId], references: [id], onDelete: Cascade, onUpdate: Cascade)
@@ -572,4 +661,48 @@ model Booking {
   updatedAt DateTime  @updatedAt @db.Timestamptz(3)
   from      DateTime? @db.Timestamptz(3)
   to        DateTime? @db.Timestamptz(3)
+}
+
+model Kit {
+  id String @id @default(cuid())
+
+  name        String
+  description String?
+  status      KitStatus @default(AVAILABLE)
+
+  image           String?
+  imageExpiration DateTime?
+
+  assets  Asset[]
+  custody KitCustody?
+  qrCodes Qr[]
+  reports ReportFound[]
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onUpdate: Cascade)
+  organizationId String
+
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdById String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum KitStatus {
+  AVAILABLE
+  IN_CUSTODY
+  CHECKED_OUT
+}
+
+model KitCustody {
+  id String @id @default(cuid())
+
+  custodian   TeamMember @relation(fields: [custodianId], references: [id])
+  custodianId String
+
+  kit   Kit    @relation(fields: [kitId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  kitId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

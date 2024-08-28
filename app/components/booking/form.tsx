@@ -1,9 +1,4 @@
-import {
-  Form,
-  useLoaderData,
-  useLocation,
-  useNavigation,
-} from "@remix-run/react";
+import { useNavigation } from "@remix-run/react";
 import { useAtom } from "jotai";
 import { useZorm } from "react-zorm";
 import { z } from "zod";
@@ -14,51 +9,87 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "~/components/shared/tooltip";
-import { useBookingStatus } from "~/hooks/use-booking-status";
-import { useUserIsSelfService } from "~/hooks/user-user-is-self-service";
-import type { BookingWithCustodians } from "~/routes/_layout+/bookings";
+import type { useBookingStatusHelpers } from "~/hooks/use-booking-status";
+import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
+import { type getHints } from "~/utils/client-hints";
 import { isFormProcessing } from "~/utils/form";
+import {
+  PermissionAction,
+  PermissionEntity,
+} from "~/utils/permissions/permission.data";
+import { userHasPermission } from "~/utils/permissions/permission.validator.client";
 import { tw } from "~/utils/tw";
 import { ActionsDropdown } from "./actions-dropdown";
-import type { BookingFormData } from "./page-content";
 import CustodianUserSelect from "../custody/custodian-user-select";
+import { Form } from "../custom-form";
 import FormRow from "../forms/form-row";
 import Input from "../forms/input";
 import { AbsolutePositionedHeaderActions } from "../layout/header/absolute-positioned-header-actions";
 import { Button } from "../shared/button";
 import { Card } from "../shared/card";
-import { ControlledActionButton } from "../shared/controlled-action-button";
+import When from "../when/when";
 
 /**
  * Important note is that the fields are only valudated when they are not disabled
  */
-export const NewBookingFormSchema = (inputFieldIsDisabled = false) =>
+export const NewBookingFormSchema = (
+  inputFieldIsDisabled = false,
+  isNewBooking = false,
+  hints?: ReturnType<typeof getHints>
+) =>
   z
     .object({
-      id: inputFieldIsDisabled ? z.string().optional() : z.string().min(1),
+      id:
+        inputFieldIsDisabled || isNewBooking
+          ? z.string().optional()
+          : z.string().min(1),
       name: inputFieldIsDisabled
         ? z.string().optional()
         : z.string().min(2, "Name is required"),
       startDate: inputFieldIsDisabled
         ? z.coerce.date().optional()
-        : z.coerce.date().refine((data) => data > new Date(), {
-            message: "Start date must be in the future",
-          }),
+        : z.coerce.date().refine(
+            (data) => {
+              let now;
+              if (hints?.timeZone) {
+                now = new Date(
+                  new Date().toLocaleString("en-US", {
+                    timeZone: hints.timeZone,
+                  })
+                );
+              } else {
+                now = new Date();
+              }
+              return data > now;
+            },
+            {
+              message: "Start date must be in the future",
+            }
+          ),
       endDate: inputFieldIsDisabled
         ? z.coerce.date().optional()
         : z.coerce.date(),
-      custodian: inputFieldIsDisabled
-        ? z.string().optional()
-        : z.string().transform((val, ctx) => {
-            if (!val && val === "") {
-              ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "Please select a custodian",
-              });
-              return z.NEVER;
-            }
-            return JSON.parse(val).userId;
-          }),
+      assetIds: z.array(z.string()).optional(),
+      custodian: z
+        .string()
+        .transform((val, ctx) => {
+          if (!val && val === "") {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "Please select a custodian",
+            });
+            return z.NEVER;
+          }
+          return JSON.parse(val);
+        })
+        .pipe(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+            userId: z.string().optional().nullable(),
+          })
+        ),
+      description: z.string().optional(),
     })
     .refine(
       (data) =>
@@ -70,135 +101,173 @@ export const NewBookingFormSchema = (inputFieldIsDisabled = false) =>
       }
     );
 
+type BookingFlags = {
+  hasAssets: boolean;
+  hasUnavailableAssets: boolean;
+  hasCheckedOutAssets: boolean;
+  hasAlreadyBookedAssets: boolean;
+  hasAssetsInCustody: boolean;
+};
+
+type BookingFormData = {
+  id?: string;
+  name?: string;
+  startDate?: string;
+  endDate?: string;
+  custodianUserId?: string; // This is a stringified value for custodianUser
+  bookingStatus?: ReturnType<typeof useBookingStatusHelpers>;
+  bookingFlags?: BookingFlags;
+  assetIds?: string[] | null;
+  description?: string | null;
+};
+
 export function BookingForm({
   id,
   name,
   startDate,
   endDate,
   custodianUserId,
-  isModal = false,
+  bookingStatus,
+  bookingFlags,
+  assetIds,
+  description,
 }: BookingFormData) {
   const navigation = useNavigation();
 
-  const routeIsNewBooking = useLocation().pathname.includes("new");
+  /** If there is noId, that means we are creating a new booking */
+  const isNewBooking = !id;
 
   const [, updateName] = useAtom(updateDynamicTitleAtom);
-  const { booking } = useLoaderData<{ booking: BookingWithCustodians }>();
 
-  const {
-    hasAssets,
-    hasUnavailableAssets,
-    isDraft,
-    isReserved,
-    isOngoing,
-    isCompleted,
-    isArchived,
-    isOverdue,
-    isCancelled,
-    hasCheckedOutAssets,
-    hasAlreadyBookedAssets,
-    hasAssetsInCustody,
-  } = useBookingStatus(booking);
+  const isProcessing = isFormProcessing(navigation.state);
 
-  const disabled = isFormProcessing(navigation.state) || isArchived;
+  const disabled = isProcessing || bookingStatus?.isArchived;
 
   const inputFieldIsDisabled =
     disabled ||
-    isReserved ||
-    isOngoing ||
-    isCompleted ||
-    isOverdue ||
-    isCancelled;
+    bookingStatus?.isReserved ||
+    bookingStatus?.isOngoing ||
+    bookingStatus?.isCompleted ||
+    bookingStatus?.isOverdue ||
+    bookingStatus?.isCancelled;
+
   const zo = useZorm(
     "NewQuestionWizardScreen",
-    NewBookingFormSchema(inputFieldIsDisabled)
+    NewBookingFormSchema(inputFieldIsDisabled, isNewBooking)
   );
 
-  const isSelfService = useUserIsSelfService();
+  const { roles, isBaseOrSelfService } = useUserRoleHelper();
+
+  const canCheckInBooking = userHasPermission({
+    roles,
+    entity: PermissionEntity.booking,
+    action: PermissionAction.checkin,
+  });
+  const canCheckOutBooking = userHasPermission({
+    roles,
+    entity: PermissionEntity.booking,
+    action: PermissionAction.checkout,
+  });
 
   return (
     <div>
       <Form ref={zo.ref} method="post">
-        {/* Render the actions on top only when the form is not in a modal */}
-        {!isModal ? (
+        {/* Render the actions on top only when the form is in edit mode */}
+        {!isNewBooking ? (
           <AbsolutePositionedHeaderActions>
-            {/* We only render the actions when we are not on the .new route */}
-            {routeIsNewBooking || (isCompleted && isSelfService) ? null : ( // When the booking is Completed, there are no actions available for selfService so we don't render it
-              // @ts-ignore
-              <ActionsDropdown booking={booking} />
-            )}
+            {/* When the booking is Completed, there are no actions available for BASE role so we don't render it */}
+            <ActionsDropdown />
 
-            {isDraft ? (
-              <Button
-                type="submit"
-                disabled={disabled}
-                variant="secondary"
-                name="intent"
-                value="save"
-                className="grow"
-                size="sm"
-              >
-                Save
-              </Button>
+            {/*  We show the button in all cases, unless the booking is in a final state */}
+            {!(
+              bookingStatus?.isCompleted ||
+              bookingStatus?.isCancelled ||
+              bookingStatus?.isArchived
+            ) ? (
+              <>
+                <input
+                  type="hidden"
+                  name="nameChangeOnly"
+                  value={bookingStatus?.isDraft ? "no" : "yes"}
+                />
+                <Button
+                  type="submit"
+                  disabled={disabled}
+                  variant="secondary"
+                  name="intent"
+                  value="save"
+                  className="grow"
+                  size="sm"
+                >
+                  Save
+                </Button>
+              </>
             ) : null}
 
             {/* When booking is draft, we show the reserve button */}
-            {isDraft ? (
-              <ControlledActionButton
-                canUseFeature={
-                  !disabled &&
-                  hasAssets &&
-                  !hasUnavailableAssets &&
-                  !hasAlreadyBookedAssets
+            {bookingStatus?.isDraft ? (
+              <Button
+                disabled={
+                  disabled ||
+                  !bookingFlags?.hasAssets ||
+                  bookingFlags?.hasAlreadyBookedAssets ||
+                  bookingFlags?.hasUnavailableAssets
+                    ? {
+                        reason: bookingFlags?.hasUnavailableAssets
+                          ? "You have some assets in your booking that are marked as unavailble. Either remove the assets from this booking or make them available again"
+                          : bookingFlags?.hasAlreadyBookedAssets
+                          ? "Your booking has assets that are already booked for the desired period. You need to resolve that before you can reserve"
+                          : isProcessing
+                          ? undefined
+                          : "You need to add assets to your booking before you can reserve it",
+                      }
+                    : false
                 }
-                buttonContent={{
-                  title: "Reserve",
-                  message: hasUnavailableAssets
-                    ? "You have some assets in your booking that are marked as unavailble. Either remove the assets from this booking or make them available again"
-                    : hasAlreadyBookedAssets
-                    ? "Your booking has assets that are already booked for the desired period. You need to resolve that before you can reserve"
-                    : "You need to add assets to your booking before you can reserve it",
-                }}
-                buttonProps={{
-                  type: "submit",
-                  role: "link",
-                  name: "intent",
-                  value: "reserve",
-                  className: "grow",
-                  size: "sm",
-                }}
-                skipCta={true}
-              />
+                type="submit"
+                name="intent"
+                value="reserve"
+                className="grow"
+                size="sm"
+              >
+                Reserve
+              </Button>
             ) : null}
 
             {/* When booking is reserved, we show the check-out button */}
-            {isReserved && !isSelfService ? (
-              <ControlledActionButton
-                canUseFeature={
-                  !disabled &&
-                  !hasUnavailableAssets &&
-                  !hasCheckedOutAssets &&
-                  !hasAssetsInCustody
-                }
-                buttonContent={{
-                  title: "Check-out",
-                  message: hasAssetsInCustody
-                    ? "Some assets in this booking are currently in custody. You need to resolve that before you can check-out"
-                    : "Some assets in this booking are not Available because they’re part of an Ongoing or Overdue booking",
-                }}
-                buttonProps={{
-                  type: "submit",
-                  name: "intent",
-                  value: "checkOut",
-                  className: "grow",
-                  size: "sm",
-                }}
-                skipCta={true}
-              />
-            ) : null}
-
-            {(isOngoing || isOverdue) && !isSelfService ? (
+            <When truthy={bookingStatus?.isReserved && canCheckOutBooking}>
               <Button
+                disabled={
+                  disabled ||
+                  bookingFlags?.hasUnavailableAssets ||
+                  bookingFlags?.hasCheckedOutAssets ||
+                  bookingFlags?.hasAssetsInCustody
+                    ? {
+                        reason: bookingFlags?.hasAssetsInCustody
+                          ? "Some assets in this booking are currently in custody. You need to resolve that before you can check-out"
+                          : isProcessing
+                          ? undefined
+                          : "Some assets in this booking are not Available because they’re part of an Ongoing or Overdue booking",
+                      }
+                    : false
+                }
+                type="submit"
+                name="intent"
+                value="checkOut"
+                className="grow"
+                size="sm"
+              >
+                Check Out
+              </Button>
+            </When>
+
+            <When
+              truthy={
+                (bookingStatus?.isOngoing || bookingStatus?.isOverdue) &&
+                canCheckInBooking
+              }
+            >
+              <Button
+                disabled={disabled}
                 type="submit"
                 name="intent"
                 value="checkIn"
@@ -207,15 +276,14 @@ export function BookingForm({
               >
                 Check-in
               </Button>
-            ) : null}
+            </When>
           </AbsolutePositionedHeaderActions>
         ) : null}
-
         <div className="-mx-4 mb-4 md:mx-0">
           <div
             className={tw(
               "mb-8 w-full lg:mb-0 ",
-              !isModal ? "lg:w-[328px]" : ""
+              !isNewBooking ? "lg:w-[328px]" : ""
             )}
           >
             <div className="flex w-full flex-col gap-3">
@@ -230,7 +298,12 @@ export function BookingForm({
                     label="Name"
                     hideLabel
                     name={zo.fields.name()}
-                    disabled={inputFieldIsDisabled}
+                    disabled={
+                      disabled ||
+                      bookingStatus?.isCompleted ||
+                      bookingStatus?.isCancelled ||
+                      bookingStatus?.isArchived
+                    }
                     error={zo.errors.name()?.message}
                     autoFocus
                     onChange={updateName}
@@ -241,10 +314,10 @@ export function BookingForm({
                   />
                 </FormRow>
               </Card>
-              <Card className="m-0 pt-0">
+              <Card className="m-0">
                 <FormRow
                   rowLabel={"Start Date"}
-                  className="mobile-styling-only border-b-0 pb-[10px]"
+                  className="mobile-styling-only border-b-0 pb-[10px] pt-0"
                   required
                 >
                   <Input
@@ -291,7 +364,7 @@ export function BookingForm({
                   defaultUserId={custodianUserId}
                   disabled={inputFieldIsDisabled}
                   className={
-                    isSelfService
+                    isBaseOrSelfService
                       ? "preview-only-custodian-select pointer-events-none cursor-not-allowed bg-gray-50"
                       : ""
                   }
@@ -308,16 +381,73 @@ export function BookingForm({
                   assets during the duration of the booking period.
                 </p>
               </Card>
-              {!routeIsNewBooking && (
-                <AddToCalendar disabled={disabled || isDraft || isCancelled} />
+              <Card className="m-0">
+                <FormRow
+                  rowLabel="Description"
+                  className="mobile-styling-only border-b-0 p-0"
+                >
+                  <Input
+                    label="Description"
+                    inputType="textarea"
+                    hideLabel
+                    name={zo.fields.description()}
+                    disabled={
+                      disabled ||
+                      bookingStatus?.isCompleted ||
+                      bookingStatus?.isCancelled ||
+                      bookingStatus?.isArchived
+                    }
+                    error={zo.errors.description()?.message}
+                    className="mobile-styling-only w-full p-0"
+                    defaultValue={description || undefined}
+                    placeholder="Add a description..."
+                  />
+                </FormRow>
+              </Card>
+              {!isNewBooking && (
+                <AddToCalendar
+                  disabled={
+                    disabled ||
+                    bookingStatus?.isDraft ||
+                    bookingStatus?.isCancelled ||
+                    false
+                  }
+                />
               )}
             </div>
           </div>
         </div>
-        {isModal ? (
-          <div className="text-right">
-            <Button type="submit">Check Asset Availability</Button>
-          </div>
+        {isNewBooking ? (
+          <Card className="sticky bottom-0 -mx-6 mb-0 rounded-none border-0 px-6 py-0 text-right">
+            <div className="-mx-6 mb-3 border-t shadow" />
+            {assetIds?.map((item, i) => (
+              <input
+                key={item}
+                type="hidden"
+                name={`assetIds[${i}]`}
+                value={item}
+              />
+            ))}
+            <div className="flex gap-3">
+              <Button
+                variant="secondary"
+                to=".."
+                width="full"
+                disabled={disabled}
+                className="w-1/2 whitespace-nowrap"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={disabled}
+                className="w-1/2 whitespace-nowrap"
+              >
+                {assetIds ? "Create Booking" : "Check Asset Availability"}
+              </Button>
+            </div>
+            <div className="h-3" />
+          </Card>
         ) : null}
       </Form>
     </div>

@@ -1,5 +1,5 @@
 import { OrganizationRoles, OrganizationType } from "@prisma/client";
-import type { Organization, User } from "@prisma/client";
+import type { Organization, Prisma, User } from "@prisma/client";
 
 import { db } from "~/database/db.server";
 import type { ErrorLabel } from "~/utils/error";
@@ -7,6 +7,25 @@ import { ShelfError } from "~/utils/error";
 import { defaultUserCategories } from "../category/default-categories";
 
 const label: ErrorLabel = "Organization";
+
+export async function getOrganizationById<T extends Prisma.OrganizationInclude>(
+  id: Organization["id"],
+  extraIncludes?: T
+) {
+  try {
+    return (await db.organization.findUniqueOrThrow({
+      where: { id },
+      include: extraIncludes,
+    })) as Prisma.OrganizationGetPayload<{ include: T }>;
+  } catch (cause) {
+    throw new ShelfError({
+      cause,
+      message: "No organization found with this ID",
+      additionalData: { id },
+      label,
+    });
+  }
+}
 
 export const getOrganizationByUserId = async ({
   userId,
@@ -45,6 +64,46 @@ export const getOrganizationByUserId = async ({
   }
 };
 
+export const getOrganizationsBySsoDomain = async (domain: string) => {
+  try {
+    const orgs = await db.organization
+      .findMany({
+        // We dont throw as we need to handle the case where no organization is found for the domain in the app logic
+        where: {
+          ssoDetails: {
+            is: {
+              domain: domain,
+            },
+          },
+          type: "TEAM",
+        },
+        include: {
+          ssoDetails: true,
+        },
+      })
+      .catch((cause) => {
+        throw new ShelfError({
+          cause,
+          title: "Organization not found",
+          message:
+            "It looks like the organization you're trying to log in to is not found. Please contact our support team to get access to your organization.",
+          additionalData: { domain },
+          label,
+        });
+      });
+
+    return orgs;
+  } catch (cause) {
+    throw new ShelfError({
+      cause,
+      message:
+        "Something went wrong with fetching the organizations related to your domain",
+      additionalData: { domain },
+      label,
+    });
+  }
+};
+
 export async function createOrganization({
   name,
   userId,
@@ -55,6 +114,8 @@ export async function createOrganization({
   image: File | null;
 }) {
   try {
+    const owner = await db.user.findFirstOrThrow({ where: { id: userId } });
+
     const data = {
       name,
       currency,
@@ -73,7 +134,17 @@ export async function createOrganization({
           id: userId,
         },
       },
-    };
+      /**
+       * Creating a teamMember when a new organization/workspace is created
+       * so that the owner appear in the list by default
+       */
+      members: {
+        create: {
+          name: `${owner.firstName} ${owner.lastName} (Owner)`,
+          user: { connect: { id: owner.id } },
+        },
+      },
+    } satisfies Prisma.OrganizationCreateInput;
 
     const org = await db.organization.create({ data });
 
@@ -118,14 +189,26 @@ export async function updateOrganization({
   image,
   userId,
   currency,
-}: Pick<Organization, "name" | "id" | "currency"> & {
+  ssoDetails,
+}: Pick<Organization, "id" | "currency"> & {
+  name?: string;
   userId: User["id"];
   image: File | null;
+  ssoDetails?: {
+    selfServiceGroupId: string;
+    adminGroupId: string;
+    baseUserGroupId: string;
+  };
 }) {
   try {
     const data = {
       name,
       currency,
+      ...(ssoDetails && {
+        ssoDetails: {
+          update: ssoDetails,
+        },
+      }),
     };
 
     if (image?.size && image?.size > 0) {
@@ -184,6 +267,14 @@ export async function getUserOrganizations({ userId }: { userId: string }) {
             userId: true,
             updatedAt: true,
             currency: true,
+            enabledSso: true,
+            owner: {
+              select: {
+                id: true,
+                email: true,
+              },
+            },
+            ssoDetails: true,
           },
         },
       },
@@ -228,6 +319,31 @@ export async function getOrganizationAdminsEmails({
       message:
         "Something went wrong while fetching organization admins emails. Please try again or contact support.",
       additionalData: { organizationId },
+      label,
+    });
+  }
+}
+
+export async function toggleOrganizationSso({
+  organizationId,
+  enabledSso,
+}: {
+  organizationId: string;
+  enabledSso: boolean;
+}) {
+  try {
+    return await db.organization.update({
+      where: { id: organizationId, type: OrganizationType.TEAM },
+      data: {
+        enabledSso,
+      },
+    });
+  } catch (cause) {
+    throw new ShelfError({
+      cause,
+      message:
+        "Something went wrong while toggling organization SSO. Please try again or contact support.",
+      additionalData: { organizationId, enabledSso },
       label,
     });
   }

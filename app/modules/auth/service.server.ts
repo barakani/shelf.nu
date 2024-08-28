@@ -1,10 +1,12 @@
-import { isAuthApiError } from "@supabase/supabase-js";
+import { AuthError, isAuthApiError } from "@supabase/supabase-js";
 import type { AuthSession } from "server/session";
+import { config } from "~/config/shelf.config";
+import { db } from "~/database/db.server";
 import { getSupabaseAdmin } from "~/integrations/supabase/client";
 import { SERVER_URL } from "~/utils/env";
 
 import type { ErrorLabel } from "~/utils/error";
-import { ShelfError } from "~/utils/error";
+import { isLikeShelfError, ShelfError } from "~/utils/error";
 import { Logger } from "~/utils/logger";
 import { mapAuthSession } from "./mappers.server";
 
@@ -133,20 +135,63 @@ export async function signInWithEmail(email: string, password: string) {
   }
 }
 
+export async function signInWithSSO(domain: string) {
+  try {
+    const { data, error } = await getSupabaseAdmin().auth.signInWithSSO({
+      domain,
+      options: {
+        redirectTo: `${SERVER_URL}/oauth/callback`,
+      },
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    return data.url;
+  } catch (cause) {
+    let message =
+      "Something went wrong. Please try again later or contact support.";
+    let shouldBeCaptured = true;
+
+    // @ts-expect-error
+    if (cause?.code === "sso_provider_not_found") {
+      message = "No SSO provider assigned for your organization's domain";
+    }
+
+    throw new ShelfError({
+      cause,
+      message,
+      label,
+      shouldBeCaptured,
+    });
+  }
+}
+
 export async function sendOTP(email: string) {
   try {
-    const { error } = await getSupabaseAdmin().auth.signInWithOtp({ email });
+    const { error } = await getSupabaseAdmin().auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: !config.disableSignup, // If signup is disabled, don't create a new user
+      },
+    });
 
     if (error) {
       throw error;
     }
   } catch (cause) {
+    const isRateLimitError =
+      cause instanceof AuthError && cause.code === "over_email_send_rate_limit";
     throw new ShelfError({
       cause,
       message:
-        "Something went wrong while sending the OTP. Please try again later or contact support.",
+        cause instanceof AuthError || isLikeShelfError(cause)
+          ? cause.message
+          : "Something went wrong while sending the OTP. Please try again later or contact support.",
       additionalData: { email },
       label,
+      shouldBeCaptured: !isRateLimitError,
     });
   }
 }
@@ -167,8 +212,30 @@ export async function sendResetPasswordLink(email: string) {
   }
 }
 
-export async function updateAccountPassword(id: string, password: string) {
+export async function updateAccountPassword(
+  id: string,
+  password: string,
+  accessToken?: string | undefined
+) {
   try {
+    const user = await db.user.findFirst({
+      where: { id },
+      select: {
+        sso: true,
+      },
+    });
+    if (user?.sso) {
+      throw new ShelfError({
+        cause: null,
+        message: "You cannot update the password of an SSO user.",
+        label,
+      });
+    }
+    //logout all the others session expect the current sesssion.
+    if (accessToken) {
+      await getSupabaseAdmin().auth.admin.signOut(accessToken, "others");
+    }
+    //on password update, it is remvoing the session in th supbase.
     const { error } = await getSupabaseAdmin().auth.admin.updateUserById(id, {
       password,
     });
@@ -240,6 +307,43 @@ export async function getAuthResponseByAccessToken(accessToken: string) {
         "Something went wrong while getting the auth response by access token. Please try again later or contact support.",
       label,
     });
+  }
+}
+
+export async function validateSession(token: string) {
+  try {
+    const t0 = performance.now();
+    const result = await db.$queryRaw<{ id: String; revoked: boolean }[]>`
+      SELECT id, revoked FROM auth.refresh_tokens 
+      WHERE token = ${token} 
+      AND revoked = false
+      LIMIT 1 
+    `;
+    const t1 = performance.now();
+
+    // eslint-disable-next-line no-console
+    console.log(`Call to validateSession took ${t1 - t0} milliseconds.`);
+
+    if (result.length === 0) {
+      //logging for debug
+      Logger.error(
+        new ShelfError({
+          cause: null,
+          message: "Refresh token is invalid or has been revoked",
+          label,
+        })
+      );
+    }
+    return result.length > 0;
+  } catch (err) {
+    Logger.error(
+      new ShelfError({
+        cause: null,
+        message: "Something went wrong while valdiating the session",
+        label,
+      })
+    );
+    return false;
   }
 }
 

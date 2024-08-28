@@ -13,6 +13,8 @@ declare global {
       CRISP_WEBSITE_ID: string;
       ENABLE_PREMIUM_FEATURES: string;
       MAINTENANCE_MODE: string;
+      CHROME_EXECUTABLE_PATH: string;
+      URL_SHORTENER: string;
     };
   }
 }
@@ -24,6 +26,7 @@ declare global {
       SUPABASE_URL: string;
       SUPABASE_SERVICE_ROLE: string;
       SERVER_URL: string;
+      URL_SHORTENER: string;
       SUPABASE_ANON_PUBLIC: string;
       SESSION_SECRET: string;
       MAPTILER_TOKEN: string;
@@ -32,6 +35,8 @@ declare global {
       STRIPE_SECRET_KEY: string;
       STRIPE_WEBHOOK_ENDPOINT_SECRET: string;
       ENABLE_PREMIUM_FEATURES: string;
+      DISABLE_SIGNUP: string;
+      DISABLE_SSO: string;
       INVITE_TOKEN_SECRET: string;
       SMTP_PWD: string;
       SMTP_HOST: string;
@@ -45,6 +50,8 @@ declare global {
       ADMIN_EMAIL: string;
       ADMIN_PASSWORD: string;
       ADMIN_USERNAME: string;
+      CHROME_EXECUTABLE_PATH: string;
+      FINGERPRINT: string;
     }
   }
 }
@@ -64,7 +71,6 @@ function getEnv(
   const value = source[name as keyof typeof source];
 
   if (!value && isRequired) {
-    // FIXME: @TODO Solve error handling
     throw new ShelfError({
       message: `${name} is not set`,
       cause: null,
@@ -102,7 +108,16 @@ export const SUPABASE_SERVICE_ROLE = getEnv("SUPABASE_SERVICE_ROLE");
 export const INVITE_TOKEN_SECRET = getEnv("INVITE_TOKEN_SECRET", {
   isSecret: true,
 });
+export const URL_SHORTENER = getEnv("URL_SHORTENER", {
+  isRequired: false,
+});
+
 export const SESSION_SECRET = getEnv("SESSION_SECRET");
+export const FINGERPRINT = getEnv("FINGERPRINT", {
+  isSecret: true,
+  isRequired: false,
+});
+
 export const STRIPE_SECRET_KEY = getEnv("STRIPE_SECRET_KEY", {
   isSecret: true,
   isRequired: false,
@@ -175,11 +190,28 @@ export const ENABLE_PREMIUM_FEATURES =
     isRequired: false,
   }) === "true" || false;
 
+export const DISABLE_SIGNUP =
+  getEnv("DISABLE_SIGNUP", {
+    isSecret: false,
+    isRequired: false,
+  }) === "true" || false;
+
+export const DISABLE_SSO =
+  getEnv("DISABLE_SSO", {
+    isSecret: false,
+    isRequired: false,
+  }) === "true" || false;
+
 export const SEND_ONBOARDING_EMAIL =
   getEnv("SEND_ONBOARDING_EMAIL", {
     isSecret: false,
     isRequired: false,
   }) === "true" || false;
+
+export const CHROME_EXECUTABLE_PATH = getEnv("CHROME_EXECUTABLE_PATH", {
+  isSecret: false,
+  isRequired: false,
+});
 
 export function getBrowserEnv() {
   return {
@@ -191,5 +223,7 @@ export function getBrowserEnv() {
     MICROSOFT_CLARITY_ID,
     ENABLE_PREMIUM_FEATURES,
     MAINTENANCE_MODE,
+    CHROME_EXECUTABLE_PATH,
+    URL_SHORTENER,
   };
 }

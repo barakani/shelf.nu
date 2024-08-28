@@ -4,18 +4,17 @@ import type {
   MetaFunction,
 } from "@remix-run/node";
 import { redirect, json } from "@remix-run/node";
-import {
-  Form,
-  useActionData,
-  useNavigation,
-  useSearchParams,
-} from "@remix-run/react";
+import { useActionData, useNavigation } from "@remix-run/react";
+
 import { useZorm } from "react-zorm";
 import { z } from "zod";
+import { Form } from "~/components/custom-form";
 
 import Input from "~/components/forms/input";
 import PasswordInput from "~/components/forms/password-input";
 import { Button } from "~/components/shared/button";
+import { config } from "~/config/shelf.config";
+import { useSearchParams } from "~/hooks/search-params";
 import { ContinueWithEmailForm } from "~/modules/auth/components/continue-with-email-form";
 import { signUpWithEmailPass } from "~/modules/auth/service.server";
 import { findUserByEmail } from "~/modules/user/service.server";
@@ -28,12 +27,29 @@ import { validEmail } from "~/utils/misc";
 export function loader({ context }: LoaderFunctionArgs) {
   const title = "Create an account";
   const subHeading = "Start your journey with Shelf";
+  const { disableSignup } = config;
 
-  if (context.isAuthenticated) {
-    return redirect("/assets");
+  try {
+    if (disableSignup) {
+      throw new ShelfError({
+        cause: null,
+        title: "Signup is disabled",
+        message:
+          "For more information, please contact your workspace administrator.",
+        label: "User onboarding",
+        status: 403,
+        shouldBeCaptured: false,
+      });
+    }
+    if (context.isAuthenticated) {
+      return redirect("/assets");
+    }
+
+    return json(data({ title, subHeading }));
+  } catch (cause) {
+    const reason = makeShelfError(cause);
+    throw json(error(reason), { status: reason.status });
   }
-
-  return json(data({ title, subHeading }));
 }
 
 const JoinFormSchema = z
@@ -118,7 +134,7 @@ export default function Join() {
 
   return (
     <div className="flex min-h-full flex-col justify-center">
-      <div className="mx-auto w-full max-w-md px-8">
+      <div className="mx-auto w-full max-w-md">
         <Form ref={zo.ref} method="post" className="space-y-6" replace>
           <div>
             <Input

@@ -5,6 +5,13 @@ import devServer, { defaultOptions } from "@hono/vite-dev-server";
 import esbuild from "esbuild";
 import { flatRoutes } from "remix-flat-routes";
 import { cjsInterop } from "vite-plugin-cjs-interop";
+import { init } from "@paralleldrive/cuid2";
+
+const createHash = init({
+  length: 8,
+});
+
+const buildHash = process.env.BUILD_HASH || createHash();
 
 export default defineConfig({
   server: {
@@ -25,6 +32,21 @@ export default defineConfig({
   // https://github.com/remix-run/remix/discussions/8917#discussioncomment-8640023
   optimizeDeps: {
     include: ["./app/routes/**/*"],
+  },
+  build: {
+    target: "ES2022",
+    assetsDir: `file-assets`,
+    rollupOptions: {
+      output: {
+        entryFileNames: `file-assets/${buildHash}/[name]-[hash].js`,
+        chunkFileNames() {
+          return `file-assets/${buildHash}/[name]-[hash].js`;
+        },
+        assetFileNames() {
+          return `file-assets/${buildHash}/[name][extname]`;
+        },
+      },
+    },
   },
   resolve: {
     alias: {
@@ -49,20 +71,26 @@ export default defineConfig({
     remix({
       serverBuildFile: "remix.js",
       ignoredRouteFiles: ["**/.*"],
+      future: {
+        // unstable_fogOfWar: true,
+        // unstable_singleFetch: true,
+      },
       routes: async (defineRoutes) => {
         return flatRoutes("routes", defineRoutes);
       },
       buildEnd: async () => {
         await esbuild
           .build({
-            alias: { "~": "./app" },
+            alias: {
+              "~": "./app",
+            },
             // The final file name
-            outfile: "build/server/index.js",
+            outdir: "build/server",
             // Our server entry point
-            entryPoints: ["server/index.ts"],
+            entryPoints: ["server/index.ts", "server/instrument.server.ts"],
             // Dependencies that should not be bundled
-            // We import the remix build from "../build/server/remix.js", so no need to bundle it again
-            external: ["./build/server/*"],
+            // We import the remix build from "../build/server/remix.js", and the sentry build from "../build/server/instrument.server.js", so no need to bundle it again
+            external: ["./build/server/*", "./instrument.server.js"],
             platform: "node",
             format: "esm",
             // Don't include node_modules in the bundle

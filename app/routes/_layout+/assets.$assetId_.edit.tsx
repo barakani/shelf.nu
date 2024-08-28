@@ -33,13 +33,14 @@ import {
   assertIsPost,
   data,
   error,
+  getCurrentSearchParams,
   getParams,
   parseData,
 } from "~/utils/http.server";
 import {
   PermissionAction,
   PermissionEntity,
-} from "~/utils/permissions/permission.validator.server";
+} from "~/utils/permissions/permission.data";
 import { requirePermission } from "~/utils/roles.server";
 import { slugify } from "~/utils/slugify";
 
@@ -58,22 +59,27 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
       action: PermissionAction.update,
     });
 
-    const asset = await getAsset({ organizationId, id });
-
-    const {
-      categories,
-      totalCategories,
-      tags,
-      locations,
-      totalLocations,
-      customFields,
-    } = await getAllEntriesForCreateAndEdit({
-      request,
+    const asset = await getAsset({
       organizationId,
-      defaults: {
-        category: asset.categoryId,
-        location: asset.locationId,
-      },
+      id,
+      include: { tags: true, customFields: true },
+    });
+
+    const { categories, totalCategories, tags, locations, totalLocations } =
+      await getAllEntriesForCreateAndEdit({
+        request,
+        organizationId,
+        defaults: {
+          category: asset.categoryId,
+          location: asset.locationId,
+        },
+      });
+
+    const searchParams = getCurrentSearchParams(request);
+
+    const customFields = await getActiveCustomFields({
+      organizationId,
+      category: searchParams.get("category") ?? asset.categoryId,
     });
 
     const header: HeaderData = {
@@ -129,8 +135,12 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
     const clonedRequest = request.clone();
     const formData = await clonedRequest.formData();
 
+    const searchParams = getCurrentSearchParams(request);
+
     const customFields = await getActiveCustomFields({
       organizationId,
+      category:
+        searchParams.get("category") ?? String(formData.get("category")),
     });
 
     const FormSchema = mergedSchema({
@@ -177,7 +187,7 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
       id,
       title,
       description,
-      categoryId: category,
+      categoryId: category ? category : "uncategorized",
       tags,
       newLocationId,
       currentLocationId,
@@ -218,6 +228,9 @@ export default function AssetEditPage() {
       <Header title={hasTitle ? title : asset.title} />
       <div className=" items-top flex justify-between">
         <AssetForm
+          id={asset.id}
+          mainImage={asset.mainImage}
+          mainImageExpiration={String(asset.mainImageExpiration)}
           title={asset.title}
           category={asset.categoryId}
           location={asset.locationId}
